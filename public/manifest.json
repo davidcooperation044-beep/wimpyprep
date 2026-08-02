@@ -1,0 +1,15 @@
+{
+  "name": "WimpyPrep",
+  "short_name": "WimpyPrep",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#241B4E",
+  "theme_color": "#241B4E",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ]
+}

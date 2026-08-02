@@ -1,38 +1,290 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSession } from '../../lib/session-bootstrap';
+import { createPublicSupabaseClient } from '../../lib/supabase';
+import { updateStreakAfterSession } from '../../lib/user-metrics';
+import { getSubscriptionStatus, WIMPY_PAY_SUBSCRIBE_URL } from '../../lib/subscription';
 
-const mockQuestions = Array.from({ length: 10 }, (_, index) => ({
-  id: `${index + 1}`,
-  question: `Mock question ${index + 1}: What is ${index + 1} + ${index + 2}?`,
-  options: ['A. 3', 'B. 4', 'C. 5', 'D. 6'],
-  answer: 'C. 5',
-}));
+type Subject = { id: string; name: string; exam_type: string };
+type QuestionRow = {
+  id: string;
+  topic: string | null;
+  question_text: string;
+  options: Array<{ label: string; text: string }>;
+  correct_option: string;
+  explanation: string | null;
+};
+
+type WimpyAIResponse = {
+  focusList: string[];
+  message: string;
+  error?: string;
+};
 
 export default function MockPage() {
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
+  const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [index, setIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(90);
   const [score, setScore] = useState(0);
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
+  const [sessionComplete, setSessionComplete] = useState(false);
+  const [wimpyAiResponse, setWimpyAiResponse] = useState<WimpyAIResponse | null>(null);
+  const [isFetchingFocus, setIsFetchingFocus] = useState(false);
+  const [isPro, setIsPro] = useState(false);
+  const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(true);
+  const { user, isAuthenticated, isLoading, signInUrl } = useSession();
 
   useEffect(() => {
-    if (timeLeft <= 0) {
+    const supabase = createPublicSupabaseClient();
+    if (!supabase) {
       return;
     }
-    const timer = window.setInterval(() => setTimeLeft((value) => value - 1), 1000);
+
+    supabase
+      .from('wp_subjects')
+      .select('id,name,exam_type')
+      .order('name', { ascending: true })
+      .then(({ data }) => {
+        if (data) {
+          setSubjects(data as Subject[]);
+          if (!selectedSubjectId && data.length > 0) {
+            setSelectedSubjectId(data[0].id);
+          }
+        }
+      });
+  }, [selectedSubjectId]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      return;
+    }
+
+    const supabase = createPublicSupabaseClient();
+    if (!supabase) {
+      return;
+    }
+
+    const loadSubscription = async () => {
+      const { active } = await getSubscriptionStatus(supabase, user.id);
+      setIsPro(active);
+      setIsSubscriptionLoading(false);
+    };
+
+    void loadSubscription();
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (!selectedSubjectId || !isAuthenticated || !user || isSubscriptionLoading) {
+      return;
+    }
+
+    const supabase = createPublicSupabaseClient();
+    if (!supabase) {
+      return;
+    }
+
+    const loadQuestions = async () => {
+      if (!isPro) {
+        setIsLoadingQuestions(false);
+        setQuestions([]);
+        return;
+      }
+
+      setIsLoadingQuestions(true);
+      setQuestions([]);
+      setIndex(0);
+      setScore(0);
+      setSelectedOption(null);
+      setSessionId(null);
+      setTimeLeft(90);
+
+      const { data, error } = await supabase
+        .from('wp_questions')
+        .select('id,topic,question_text,options,correct_option,explanation')
+        .eq('subject_id', selectedSubjectId)
+        .limit(40);
+
+      if (error) {
+        setQuestions([]);
+      } else {
+        setQuestions((data ?? []) as QuestionRow[]);
+      }
+      setIsLoadingQuestions(false);
+    };
+
+    void loadQuestions();
+  }, [isAuthenticated, selectedSubjectId, user, isPro, isSubscriptionLoading]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user || !selectedSubjectId || !questions.length || sessionId) {
+      return;
+    }
+
+    const supabase = createPublicSupabaseClient();
+    if (!supabase) {
+      return;
+    }
+
+    const createSession = async () => {
+      const { data, error } = await supabase
+        .from('wp_sessions')
+        .insert({
+          user_id: user.id,
+          mode: 'mock_exam',
+          subject_ids: [selectedSubjectId],
+          score: 0,
+          total_questions: questions.length,
+        })
+        .select('id')
+        .single();
+
+      if (!error && data) {
+        setSessionId(data.id);
+      }
+    };
+
+    void createSession();
+  }, [isAuthenticated, questions.length, selectedSubjectId, sessionId, user]);
+
+  useEffect(() => {
+    if (timeLeft <= 0 || !isAuthenticated || !sessionId || sessionComplete) {
+      return;
+    }
+
+    const timer = window.setInterval(() => setTimeLeft((value) => Math.max(value - 1, 0)), 1000);
     return () => window.clearInterval(timer);
-  }, [timeLeft]);
+  }, [isAuthenticated, sessionId, sessionComplete, timeLeft]);
 
-  const question = mockQuestions[index];
-  const progress = useMemo(() => ((index + 1) / mockQuestions.length) * 100, [index]);
+  const question = questions[index];
+  const progress = useMemo(() => (questions.length ? ((index + 1) / questions.length) * 100 : 0), [index, questions.length]);
 
-  const handleAnswer = (option: string) => {
-    if (option === question.answer) {
-      setScore((value) => value + 1);
+  useEffect(() => {
+    if (timeLeft !== 0 || !isAuthenticated || !sessionId || sessionComplete) {
+      return;
     }
-    if (index < mockQuestions.length - 1) {
-      setIndex((value) => value + 1);
+
+    void completeSession(question?.id);
+  }, [timeLeft, isAuthenticated, question?.id, sessionId, sessionComplete]);
+
+  const submitAnswer = async (option: string) => {
+    if (!isAuthenticated || !user || !question || !sessionId || selectedOption) {
+      return;
     }
+
+    const isCorrect = option === question.correct_option;
+    const nextScore = isCorrect ? score + 1 : score;
+    const supabase = createPublicSupabaseClient();
+    if (!supabase) {
+      return;
+    }
+
+    setSelectedOption(option);
+    setScore(nextScore);
+
+    await supabase.from('wp_attempts').insert({
+      user_id: user.id,
+      question_id: question.id,
+      selected_option: option,
+      is_correct: isCorrect,
+      session_id: sessionId,
+    });
   };
+
+  const fetchRecommendedFocus = async (questionId?: string) => {
+    if (!sessionId) {
+      return;
+    }
+
+    setIsFetchingFocus(true);
+    setWimpyAiResponse(null);
+
+    const response = await fetch('/api/wimpyai', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, questionId }),
+    });
+
+    const data = await response.json().catch(() => ({ focusList: [], message: 'Unable to parse WimpyAI response.' }));
+    setWimpyAiResponse(data as WimpyAIResponse);
+    setIsFetchingFocus(false);
+  };
+
+  const completeSession = async (questionId?: string) => {
+    if (!sessionId || !user) {
+      return;
+    }
+
+    const supabase = createPublicSupabaseClient();
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.from('wp_sessions').update({ score, completed_at: new Date().toISOString() }).eq('id', sessionId);
+    await updateStreakAfterSession(supabase, user.id);
+    setSessionComplete(true);
+    await fetchRecommendedFocus(questionId);
+  };
+
+  const nextQuestion = async () => {
+    if (index < questions.length - 1) {
+      setIndex((value) => value + 1);
+      setSelectedOption(null);
+      return;
+    }
+
+    await completeSession(question?.id);
+  };
+
+  if (isLoading) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="meta">Checking your session…</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="eyebrow">Mock exam locked</p>
+          <h1>Sign in to track your progress</h1>
+          <p className="lead">Your mock-exam attempts need a real identity attached so they can be saved and reviewed.</p>
+          <a href={signInUrl} className="button primary">Sign in with WimpyID</a>
+        </section>
+      </main>
+    );
+  }
+
+  if (isSubscriptionLoading) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="meta">Verifying your WimpyPrep Pro access…</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!isPro) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="eyebrow">WimpyPrep Pro required</p>
+          <h1>Mock exams are Pro-only</h1>
+          <p className="lead">Upgrade to WimpyPrep Pro to unlock full mock exams and priority AI guidance.</p>
+          <a href={WIMPY_PAY_SUBSCRIBE_URL} className="button primary">Upgrade to Pro</a>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="shell">
@@ -51,16 +303,83 @@ export default function MockPage() {
 
       <section className="panel">
         <div className="panel-header">
-          <h2>Question {index + 1}</h2>
-          <span>{question.question}</span>
+          <h2>Choose subject</h2>
+          <select
+            value={selectedSubjectId}
+            onChange={(event) => {
+              setSelectedSubjectId(event.target.value);
+              setSessionId(null);
+              setSessionComplete(false);
+              setWimpyAiResponse(null);
+            }}
+            className="option"
+          >
+            {subjects.map((subject) => (
+              <option key={subject.id} value={subject.id}>{subject.name}</option>
+            ))}
+          </select>
         </div>
-        <div className="options-list">
-          {question.options.map((option) => (
-            <button key={option} className="option" onClick={() => handleAnswer(option)}>
-              {option}
-            </button>
-          ))}
-        </div>
+
+        {isLoadingQuestions ? <p className="meta">Loading questions…</p> : null}
+        {!question ? (
+          <p className="lead">No questions are available for this subject yet. Import a question set first.</p>
+        ) : (
+          <>
+            <div className="panel-header">
+              <h2>{question.topic ?? 'General'}</h2>
+              <span>Question {index + 1}/{questions.length}</span>
+            </div>
+            <p className="question-text">{question.question_text}</p>
+            <div className="options-list">
+              {question.options.map((option) => (
+                <button
+                  key={option.label}
+                  className="option"
+                  onClick={() => void submitAnswer(option.label)}
+                  disabled={Boolean(selectedOption) || timeLeft === 0}
+                >
+                  {option.label}. {option.text}
+                </button>
+              ))}
+            </div>
+            {selectedOption ? (
+              <div className="feedback">
+                <p>{selectedOption === question.correct_option ? 'Correct — keep the pace.' : `Not quite. Answer ${question.correct_option} is correct.`}</p>
+                {question.explanation ? <p>{question.explanation}</p> : null}
+                {selectedOption !== question.correct_option && sessionId ? (
+                  <button
+                    className="button secondary"
+                    onClick={() => void fetchRecommendedFocus(question.id)}
+                  >
+                    Explain this question
+                  </button>
+                ) : null}
+                <button className="button primary" onClick={nextQuestion}>
+                  {index === questions.length - 1 ? 'Finish exam' : 'Next question'}
+                </button>
+              </div>
+            ) : null}
+            {(sessionComplete || wimpyAiResponse) ? (
+              <div className="focus-panel">
+                <div className="panel-header">
+                  <h2>Recommended Focus</h2>
+                  <span>{isFetchingFocus ? 'Analyzing your session…' : 'AI-powered study guidance'}</span>
+                </div>
+                {isFetchingFocus ? <p className="meta">Loading focus recommendations…</p> : null}
+                {wimpyAiResponse ? (
+                  <>
+                    <div className="chip-list">
+                      {wimpyAiResponse.focusList.map((focusItem) => (
+                        <span key={focusItem} className="chip">{focusItem}</span>
+                      ))}
+                    </div>
+                    <p className="lead">{wimpyAiResponse.message}</p>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        )}
       </section>
     </main>
   );
