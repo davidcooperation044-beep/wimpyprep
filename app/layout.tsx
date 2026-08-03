@@ -39,12 +39,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <header className="site-header">
             <div className="brand-row">
               <a href="/" className="brand">WimpyPrep</a>
-              <nav className="site-nav" aria-label="Primary navigation">
-                <a href="/practice" className="button outline">Practice</a>
-                <a href="/mock" className="button outline">Mock</a>
-                <a href="/dashboard" className="button outline">Dashboard</a>
-                <a href="/leaderboard" className="button outline">Leaderboard</a>
-              </nav>
             </div>
             <div className="nav-actions">
               <ThemeToggle />
