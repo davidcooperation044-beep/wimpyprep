@@ -1,7 +1,6 @@
 import { type SupabaseClient } from '@supabase/supabase-js';
 
 export const FREE_PRACTICE_DAILY_LIMIT = 15;
-export const WIMPY_PAY_SUBSCRIBE_URL = process.env.NEXT_PUBLIC_WIMPY_PAY_SUBSCRIBE_URL ?? 'https://pay.wimpy-corp.com.ng/subscribe?plan=wimpyprep-pro';
 
 export async function getSubscriptionStatus(supabase: SupabaseClient, userId: string) {
   const { data, error } = await supabase

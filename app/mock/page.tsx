@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSession } from '../../lib/session-bootstrap';
 import { createPublicSupabaseClient } from '../../lib/supabase';
 import { updateStreakAfterSession } from '../../lib/user-metrics';
-import { getSubscriptionStatus, WIMPY_PAY_SUBSCRIBE_URL } from '../../lib/subscription';
+import { getSubscriptionStatus } from '../../lib/subscription';
+import { UpgradeModal } from '../components/upgrade-modal';
+import { SubjectSelection } from '../components/subject-selection';
 
 type Subject = { id: string; name: string; exam_type: string };
 type QuestionRow = {
@@ -42,6 +44,10 @@ export default function MockPage() {
   const [isFetchingFocus, setIsFetchingFocus] = useState(false);
   const [isPro, setIsPro] = useState(false);
   const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(true);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showSubjectSelection, setShowSubjectSelection] = useState(false);
+  const [userSubjectIds, setUserSubjectIds] = useState<string[]>([]);
+  const [isSubjectSelectionReady, setIsSubjectSelectionReady] = useState(false);
   const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
 
   useEffect(() => {
@@ -57,12 +63,9 @@ export default function MockPage() {
       .then(({ data }) => {
         if (data) {
           setSubjects(data as Subject[]);
-          if (!selectedSubjectId && data.length > 0) {
-            setSelectedSubjectId(data[0].id);
-          }
         }
       });
-  }, [selectedSubjectId]);
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated || !user) {
@@ -80,8 +83,34 @@ export default function MockPage() {
       setIsSubscriptionLoading(false);
     };
 
+    const loadUserSubjects = async () => {
+      const response = await fetch('/api/user-subjects', {
+        headers: {
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+      });
+
+      if (!response.ok) {
+        setUserSubjectIds([]);
+        setIsSubjectSelectionReady(true);
+        return;
+      }
+
+      const data = await response.json().catch(() => ({ selections: [] }));
+      const ids = (data?.selections ?? []).map((selection: { subject_id: string }) => selection.subject_id);
+      setUserSubjectIds(ids);
+      setIsSubjectSelectionReady(true);
+      if (!selectedSubjectId && ids.length > 0) {
+        const nextSubject = subjects.find((subject) => subject.id === ids[0]);
+        if (nextSubject) {
+          setSelectedSubjectId(nextSubject.id);
+        }
+      }
+    };
+
     void loadSubscription();
-  }, [isAuthenticated, user]);
+    void loadUserSubjects();
+  }, [accessToken, isAuthenticated, selectedSubjectId, subjects, user]);
 
   useEffect(() => {
     if (!selectedSubjectId || !isAuthenticated || !user || isSubscriptionLoading) {
@@ -279,11 +308,35 @@ export default function MockPage() {
     );
   }
 
-  if (isSubscriptionLoading) {
+  if (isSubscriptionLoading || !isSubjectSelectionReady) {
     return (
       <main className="shell">
         <section className="panel">
-          <p className="meta">Verifying your WimpyPrep Pro access…</p>
+          <p className="meta">Preparing your mock-exam setup…</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (showSubjectSelection) {
+    return (
+      <main className="shell">
+        <SubjectSelection onComplete={() => {
+          setShowSubjectSelection(false);
+          setIsSubjectSelectionReady(false);
+        }} />
+      </main>
+    );
+  }
+
+  if (!userSubjectIds.length) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="eyebrow">Set your study focus</p>
+          <h1>Choose the subjects you’re offering first.</h1>
+          <p className="lead">This one-time setup helps personalize mock exams.</p>
+          <button className="button primary" onClick={() => setShowSubjectSelection(true)} type="button">Choose subjects</button>
         </section>
       </main>
     );
@@ -296,7 +349,8 @@ export default function MockPage() {
           <p className="eyebrow">WimpyPrep Pro required</p>
           <h1>Mock exams are Pro-only</h1>
           <p className="lead">Upgrade to WimpyPrep Pro to unlock full mock exams and priority AI guidance.</p>
-          <a href={WIMPY_PAY_SUBSCRIBE_URL} className="button primary">Upgrade to Pro</a>
+          <button className="button primary" onClick={() => setShowUpgradeModal(true)} type="button">Upgrade to Pro</button>
+          <UpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} onSuccess={() => setShowUpgradeModal(false)} />
         </section>
       </main>
     );
@@ -323,6 +377,10 @@ export default function MockPage() {
           <select
             value={selectedSubjectId}
             onChange={(event) => {
+              if (event.target.value === '__other__') {
+                setShowSubjectSelection(true);
+                return;
+              }
               setSelectedSubjectId(event.target.value);
               setSessionId(null);
               setSessionComplete(false);
@@ -330,9 +388,12 @@ export default function MockPage() {
             }}
             className="option"
           >
-            {subjects.map((subject) => (
-              <option key={subject.id} value={subject.id}>{subject.name}</option>
-            ))}
+            {subjects
+              .filter((subject) => userSubjectIds.includes(subject.id) || subject.id === selectedSubjectId)
+              .map((subject) => (
+                <option key={subject.id} value={subject.id}>{subject.name}</option>
+              ))}
+            <option value="__other__">Practice a different subject</option>
           </select>
         </div>
 

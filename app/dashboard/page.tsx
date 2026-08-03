@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useSession } from '../../lib/session-bootstrap';
 import { createPublicSupabaseClient } from '../../lib/supabase';
 
@@ -95,6 +96,7 @@ function SubjectAccuracyChart({ accuracy }: { accuracy: SubjectAccuracy[] }) {
 export default function DashboardPage() {
   const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
+  const [subjectSelectionCount, setSubjectSelectionCount] = useState(0);
 
   useEffect(() => {
     if (!isAuthenticated || !user) {
@@ -119,6 +121,7 @@ export default function DashboardPage() {
       const data = await response.json();
       if (active) {
         setDashboard(data);
+        setSubjectSelectionCount(data.subjectSelectionCount ?? 0);
       }
     };
 
@@ -157,6 +160,9 @@ export default function DashboardPage() {
         <p className="eyebrow">Dashboard</p>
         <h1>Track your prep progress with clear performance insights.</h1>
         <p className="lead">Score history, subject accuracy, percentile rank, and unfinished sessions help you continue smarter.</p>
+        <div className="hero-actions">
+          <Link href="/settings" className="button secondary">Edit subject selection</Link>
+        </div>
         <div className="stats-grid" style={{ marginTop: '20px' }}>
           <article className="stat-card">
             <strong>{dashboard?.scoreTrends.length ?? 0}</strong>
@@ -167,8 +173,8 @@ export default function DashboardPage() {
             <span>Percentile vs. all users</span>
           </article>
           <article className="stat-card">
-            <strong>{dashboard?.accuracyBySubject.length ?? 0}</strong>
-            <span>Subjects reviewed</span>
+            <strong>{subjectSelectionCount}</strong>
+            <span>Selected subjects</span>
           </article>
         </div>
       </section>

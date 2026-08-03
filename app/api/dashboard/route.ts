@@ -33,7 +33,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Supabase service client is not configured' }, { status: 500 });
   }
 
-  const [sessionsResult, incompleteResult, attemptsResult] = await Promise.all([
+  const [sessionsResult, incompleteResult, attemptsResult, userSubjectsResult] = await Promise.all([
     supabase
       .from('wp_sessions')
       .select('id,mode,score,total_questions,started_at,completed_at')
@@ -50,15 +50,20 @@ export async function GET(request: Request) {
       .from('wp_attempts')
       .select('question_id,is_correct')
       .eq('user_id', userId),
+    supabase
+      .from('wp_user_subjects')
+      .select('subject_id')
+      .eq('user_id', userId),
   ]);
 
-  if (sessionsResult.error || incompleteResult.error || attemptsResult.error) {
+  if (sessionsResult.error || incompleteResult.error || attemptsResult.error || userSubjectsResult.error) {
     return NextResponse.json({ error: 'Unable to load dashboard metrics' }, { status: 500 });
   }
 
   const completedSessions = sessionsResult.data ?? [];
   const incompleteSession = (incompleteResult.data ?? [])[0] ?? null;
   const attempts = attemptsResult.data ?? [];
+  const selectedSubjectIds = Array.from(new Set((userSubjectsResult.data ?? []).map((item) => item.subject_id))).filter(Boolean);
 
   const scoreTrends = completedSessions
     .map((session) => ({
@@ -143,12 +148,20 @@ export async function GET(request: Request) {
       ...subject,
       accuracy: subject.total ? (subject.correct / subject.total) * 100 : 0,
     }))
-    .sort((a, b) => b.accuracy - a.accuracy);
+    .sort((a, b) => {
+      const aPreferred = selectedSubjectIds.includes(a.subjectId) ? 1 : 0;
+      const bPreferred = selectedSubjectIds.includes(b.subjectId) ? 1 : 0;
+      if (aPreferred !== bPreferred) {
+        return bPreferred - aPreferred;
+      }
+      return b.accuracy - a.accuracy;
+    });
 
   return NextResponse.json({
     scoreTrends,
     accuracyBySubject,
     percentileRank,
     incompleteSession,
+    subjectSelectionCount: selectedSubjectIds.length,
   });
 }

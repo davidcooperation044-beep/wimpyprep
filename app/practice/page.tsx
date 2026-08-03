@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSession } from '../../lib/session-bootstrap';
 import { createPublicSupabaseClient } from '../../lib/supabase';
 import { updateStreakAfterSession } from '../../lib/user-metrics';
-import { FREE_PRACTICE_DAILY_LIMIT, getSubscriptionStatus, getTodayPracticeCount, WIMPY_PAY_SUBSCRIBE_URL } from '../../lib/subscription';
+import { FREE_PRACTICE_DAILY_LIMIT, getSubscriptionStatus, getTodayPracticeCount } from '../../lib/subscription';
+import { UpgradeModal } from '../components/upgrade-modal';
+import { SubjectSelection } from '../components/subject-selection';
 
 type Subject = { id: string; name: string; exam_type: string };
 type QuestionRow = {
@@ -29,6 +31,10 @@ type WimpyAIResponse = {
 export default function PracticePage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showSubjectSelection, setShowSubjectSelection] = useState(false);
+  const [userSubjectIds, setUserSubjectIds] = useState<string[]>([]);
+  const [isSubjectSelectionReady, setIsSubjectSelectionReady] = useState(false);
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [index, setIndex] = useState(0);
   const [score, setScore] = useState(0);
@@ -61,12 +67,9 @@ export default function PracticePage() {
       .then(({ data }) => {
         if (data) {
           setSubjects(data as Subject[]);
-          if (!selectedSubjectId && data.length > 0) {
-            setSelectedSubjectId(data[0].id);
-          }
         }
       });
-  }, [selectedSubjectId]);
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated || !user) {
@@ -91,8 +94,36 @@ export default function PracticePage() {
       setIsSubscriptionLoading(false);
     };
 
+    const loadUserSubjects = async () => {
+      const response = await fetch('/api/user-subjects', {
+        headers: {
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+      });
+
+      if (!response.ok) {
+        setUserSubjectIds([]);
+        setIsSubjectSelectionReady(true);
+        return;
+      }
+
+      const data = await response.json().catch(() => ({ selections: [] }));
+      const ids = (data?.selections ?? []).map((selection: { subject_id: string }) => selection.subject_id);
+      setUserSubjectIds(ids);
+      setIsSubjectSelectionReady(true);
+      if (!selectedSubjectId && ids.length > 0) {
+        const nextSubject = subjects.find((subject) => subject.id === ids[0]);
+        if (nextSubject) {
+          setSelectedSubjectId(nextSubject.id);
+        }
+      }
+    };
+
     void loadSubscription();
-  }, [isAuthenticated, user]);
+    void loadUserSubjects();
+
+    void loadSubscription();
+  }, [accessToken, isAuthenticated, selectedSubjectId, subjects, user]);
 
   useEffect(() => {
     if (!selectedSubjectId || !isAuthenticated || !user || isSubscriptionLoading) {
@@ -320,11 +351,35 @@ export default function PracticePage() {
     );
   }
 
-  if (isSubscriptionLoading) {
+  if (isSubscriptionLoading || !isSubjectSelectionReady) {
     return (
       <main className="shell">
         <section className="panel">
-          <p className="meta">Checking your subscription status…</p>
+          <p className="meta">Preparing your study plan…</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (showSubjectSelection) {
+    return (
+      <main className="shell">
+        <SubjectSelection onComplete={() => {
+          setShowSubjectSelection(false);
+          setIsSubjectSelectionReady(false);
+        }} />
+      </main>
+    );
+  }
+
+  if (!userSubjectIds.length) {
+    return (
+      <main className="shell">
+        <section className="panel">
+          <p className="eyebrow">Set your study focus</p>
+          <h1>Choose the subjects you’re offering first.</h1>
+          <p className="lead">This one-time setup helps personalize every practice and mock session.</p>
+          <button className="button primary" onClick={() => setShowSubjectSelection(true)} type="button">Choose subjects</button>
         </section>
       </main>
     );
@@ -348,6 +403,10 @@ export default function PracticePage() {
           <select
             value={selectedSubjectId}
             onChange={(event) => {
+              if (event.target.value === '__other__') {
+                setShowSubjectSelection(true);
+                return;
+              }
               setSelectedSubjectId(event.target.value);
               setSessionId(null);
               setSessionComplete(false);
@@ -357,9 +416,12 @@ export default function PracticePage() {
             }}
             className="option"
           >
-            {subjects.map((subject) => (
-              <option key={subject.id} value={subject.id}>{subject.name}</option>
-            ))}
+            {subjects
+              .filter((subject) => userSubjectIds.includes(subject.id) || subject.id === selectedSubjectId)
+              .map((subject) => (
+                <option key={subject.id} value={subject.id}>{subject.name}</option>
+              ))}
+            <option value="__other__">Practice a different subject</option>
           </select>
         </div>
 
@@ -376,7 +438,8 @@ export default function PracticePage() {
           <div className="panel">
             <p className="lead">You’ve reached your free daily limit of {FREE_PRACTICE_DAILY_LIMIT} practice questions.</p>
             {limitMessage ? <p className="meta">{limitMessage}</p> : <p className="meta">Upgrade to WimpyPrep Pro for unlimited practice and full AI insights.</p>}
-            <a className="button primary" href={WIMPY_PAY_SUBSCRIBE_URL}>Upgrade to Pro</a>
+            <button className="button primary" onClick={() => setShowUpgradeModal(true)} type="button">Upgrade to Pro</button>
+          <UpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} onSuccess={() => setShowUpgradeModal(false)} />
           </div>
         ) : !question ? (
           <p className="lead">No questions are available for this subject yet. Import a question set first.</p>

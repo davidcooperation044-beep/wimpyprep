@@ -3,7 +3,6 @@ import { createServiceSupabaseClient } from '../../../lib/supabase';
 
 const WIMPYAI_API_URL = process.env.WIMPYAI_API_URL ?? 'https://wimpyai.onrender.com/api/chat';
 const WIMPYAI_MODEL = process.env.WIMPYAI_MODEL ?? 'gpt-4.1-mini';
-const WIMPY_PAY_SUBSCRIBE_URL = process.env.NEXT_PUBLIC_WIMPY_PAY_SUBSCRIBE_URL ?? 'https://pay.wimpy-corp.com.ng/subscribe?plan=wimpyprep-pro';
 
 function buildPrompt({ session, topicSummary, missedQuestions, questionForExplanation }: {
   session: { id: string; mode: string; score: number; total_questions: number; subject_ids: string[]; completed_at: string | null };
@@ -76,7 +75,7 @@ export async function POST(request: Request) {
   if (!subscription) {
     return NextResponse.json({
       focusList: [],
-      message: 'WimpyPrep Pro is required for AI weak-area recommendations. Upgrade at https://pay.wimpy-corp.com.ng/subscribe?plan=wimpyprep-pro',
+      message: 'WimpyPrep Pro is required for AI weak-area recommendations. Upgrade from the in-app Pro panel to continue.',
     }, { status: 402 });
   }
 
