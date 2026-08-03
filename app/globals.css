@@ -1,3 +1,23 @@
+:root[data-theme='dark'] {
+  --bg: #241B4E;
+  --surface: #14142B;
+  --text: #F7F7FB;
+  --accent: #C4F135;
+  --gold: #D4AF37;
+  --alert: #FF5A5F;
+}
+
+:root[data-theme='light'] {
+  --bg: #F7F7FB;
+  --surface: #FFFFFF;
+  --text: #14142B;
+  --accent: #7A9A00;
+  --gold: #A9791F;
+  --alert: #C0392B;
+}
+
+* { box-sizing: border-box; }
+html, body { padding: 0; margin: 0; background: var(--bg); color: var(--text); font-family: Inter, Arial, sans-serif; }
 
 .site-header {
   display: flex;

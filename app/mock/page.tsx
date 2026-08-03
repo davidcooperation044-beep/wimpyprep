@@ -12,7 +12,11 @@ type QuestionRow = {
   topic: string | null;
   question_text: string;
   options: Array<{ label: string; text: string }>;
-  correct_option: string;
+};
+
+type QuestionResult = {
+  isCorrect: boolean;
+  correctOption: string;
   explanation: string | null;
 };
 
@@ -30,6 +34,7 @@ export default function MockPage() {
   const [timeLeft, setTimeLeft] = useState(90);
   const [score, setScore] = useState(0);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [questionResult, setQuestionResult] = useState<QuestionResult | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
@@ -37,7 +42,7 @@ export default function MockPage() {
   const [isFetchingFocus, setIsFetchingFocus] = useState(false);
   const [isPro, setIsPro] = useState(false);
   const [isSubscriptionLoading, setIsSubscriptionLoading] = useState(true);
-  const { user, isAuthenticated, isLoading, signInUrl } = useSession();
+  const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
 
   useEffect(() => {
     const supabase = createPublicSupabaseClient();
@@ -100,20 +105,24 @@ export default function MockPage() {
       setIndex(0);
       setScore(0);
       setSelectedOption(null);
+      setQuestionResult(null);
       setSessionId(null);
       setTimeLeft(90);
 
-      const { data, error } = await supabase
-        .from('wp_questions')
-        .select('id,topic,question_text,options,correct_option,explanation')
-        .eq('subject_id', selectedSubjectId)
-        .limit(40);
+      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(selectedSubjectId)}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+      });
 
-      if (error) {
+      if (!response.ok) {
         setQuestions([]);
-      } else {
-        setQuestions((data ?? []) as QuestionRow[]);
+        setIsLoadingQuestions(false);
+        return;
       }
+
+      const json = await response.json().catch(() => null);
+      setQuestions((json?.questions ?? []) as QuestionRow[]);
       setIsLoadingQuestions(false);
     };
 
@@ -176,23 +185,30 @@ export default function MockPage() {
       return;
     }
 
-    const isCorrect = option === question.correct_option;
-    const nextScore = isCorrect ? score + 1 : score;
-    const supabase = createPublicSupabaseClient();
-    if (!supabase) {
+    setSelectedOption(option);
+    setQuestionResult(null);
+
+    const response = await fetch('/api/questions/answer', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken ?? ''}`,
+      },
+      body: JSON.stringify({
+        questionId: question.id,
+        selectedOption: option,
+        sessionId,
+      }),
+    });
+
+    if (!response.ok) {
+      setQuestionResult({ isCorrect: false, correctOption: '', explanation: 'Unable to validate answer.' });
       return;
     }
 
-    setSelectedOption(option);
-    setScore(nextScore);
-
-    await supabase.from('wp_attempts').insert({
-      user_id: user.id,
-      question_id: question.id,
-      selected_option: option,
-      is_correct: isCorrect,
-      session_id: sessionId,
-    });
+    const result = (await response.json()) as QuestionResult;
+    setQuestionResult(result);
+    setScore((currentScore) => (result.isCorrect ? currentScore + 1 : currentScore));
   };
 
   const fetchRecommendedFocus = async (questionId?: string) => {
@@ -344,16 +360,22 @@ export default function MockPage() {
             </div>
             {selectedOption ? (
               <div className="feedback">
-                <p>{selectedOption === question.correct_option ? 'Correct — keep the pace.' : `Not quite. Answer ${question.correct_option} is correct.`}</p>
-                {question.explanation ? <p>{question.explanation}</p> : null}
-                {selectedOption !== question.correct_option && sessionId ? (
-                  <button
-                    className="button secondary"
-                    onClick={() => void fetchRecommendedFocus(question.id)}
-                  >
-                    Explain this question
-                  </button>
-                ) : null}
+                {questionResult ? (
+                  <>
+                    <p>{questionResult.isCorrect ? 'Correct — keep the pace.' : `Not quite. Answer ${questionResult.correctOption} is correct.`}</p>
+                    {questionResult.explanation ? <p>{questionResult.explanation}</p> : null}
+                    {!questionResult.isCorrect && sessionId ? (
+                      <button
+                        className="button secondary"
+                        onClick={() => void fetchRecommendedFocus(question.id)}
+                      >
+                        Explain this question
+                      </button>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="meta">Checking your answer…</p>
+                )}
                 <button className="button primary" onClick={nextQuestion}>
                   {index === questions.length - 1 ? 'Finish exam' : 'Next question'}
                 </button>

@@ -93,7 +93,7 @@ function SubjectAccuracyChart({ accuracy }: { accuracy: SubjectAccuracy[] }) {
 }
 
 export default function DashboardPage() {
-  const { user, isAuthenticated, isLoading, signInUrl } = useSession();
+  const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
   const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
 
   useEffect(() => {
@@ -108,7 +108,11 @@ export default function DashboardPage() {
 
     let active = true;
     const loadDashboard = async () => {
-      const response = await fetch(`/api/dashboard?userId=${encodeURIComponent(user.id)}`);
+      const response = await fetch('/api/dashboard', {
+        headers: {
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+      });
       if (!response.ok) {
         return;
       }

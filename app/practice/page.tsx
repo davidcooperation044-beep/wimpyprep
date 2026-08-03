@@ -12,7 +12,11 @@ type QuestionRow = {
   topic: string | null;
   question_text: string;
   options: Array<{ label: string; text: string }>;
-  correct_option: string;
+};
+
+type QuestionResult = {
+  isCorrect: boolean;
+  correctOption: string;
   explanation: string | null;
 };
 
@@ -29,6 +33,7 @@ export default function PracticePage() {
   const [index, setIndex] = useState(0);
   const [score, setScore] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [questionResult, setQuestionResult] = useState<QuestionResult | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
@@ -41,7 +46,7 @@ export default function PracticePage() {
   const [offlineReady, setOfflineReady] = useState(false);
   const [offlineError, setOfflineError] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
-  const { user, isAuthenticated, isLoading, signInUrl } = useSession();
+  const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
 
   useEffect(() => {
     const supabase = createPublicSupabaseClient();
@@ -118,7 +123,11 @@ export default function PracticePage() {
         return;
       }
 
-      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(selectedSubjectId)}`);
+      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(selectedSubjectId)}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+      });
       if (response.ok) {
         const json = await response.json().catch(() => null);
         setQuestions((json?.questions ?? []) as QuestionRow[]);
@@ -178,7 +187,11 @@ export default function PracticePage() {
     setOfflineError('');
 
     try {
-      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(selectedSubjectId)}`);
+      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(selectedSubjectId)}`, {
+        headers: {
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+      });
       if (!response.ok) {
         throw new Error('Unable to download questions for offline use.');
       }
@@ -200,24 +213,30 @@ export default function PracticePage() {
       return;
     }
 
-    const nextScore = option === question.correct_option ? score + 1 : score;
-    const isCorrect = option === question.correct_option;
-    const supabase = createPublicSupabaseClient();
-    if (!supabase) {
+    setSelected(option);
+    setQuestionResult(null);
+
+    const response = await fetch('/api/questions/answer', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken ?? ''}`,
+      },
+      body: JSON.stringify({
+        questionId: question.id,
+        selectedOption: option,
+        sessionId,
+      }),
+    });
+
+    if (!response.ok) {
+      setQuestionResult({ isCorrect: false, correctOption: '', explanation: 'Unable to validate answer.' });
       return;
     }
 
-    setSelected(option);
-    setScore(nextScore);
-
-    await supabase.from('wp_attempts').insert({
-      user_id: user.id,
-      question_id: question.id,
-      selected_option: option,
-      is_correct: isCorrect,
-      session_id: sessionId,
-    });
-
+    const result = (await response.json()) as QuestionResult;
+    setQuestionResult(result);
+    setScore((currentScore) => (result.isCorrect ? currentScore + 1 : currentScore));
     setPracticeCount((count) => count + 1);
   };
 
@@ -382,9 +401,9 @@ export default function PracticePage() {
             </div>
             {selected ? (
               <div className="feedback">
-                <p>{selected === question.correct_option ? 'Correct — nice work.' : `Not quite. The correct answer is ${question.correct_option}.`}</p>
-                {question.explanation ? <p>{question.explanation}</p> : null}
-                {selected !== question.correct_option && sessionId ? (
+                <p>{questionResult?.isCorrect ? 'Correct — nice work.' : `Not quite. The correct answer is ${questionResult?.correctOption}.`}</p>
+                {questionResult?.explanation ? <p>{questionResult.explanation}</p> : null}
+                {!questionResult?.isCorrect && sessionId ? (
                   <button
                     className="button secondary"
                     onClick={() => void fetchRecommendedFocus(question.id)}

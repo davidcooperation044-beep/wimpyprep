@@ -10,7 +10,7 @@ import { buildReferralLink, loadUserMetrics, type UserMetrics } from '../lib/use
 const subjects = ['English', 'Mathematics', 'Physics', 'Biology'];
 
 export default function HomePage() {
-  const { isAuthenticated, isLoading, signInUrl, user } = useSession();
+  const { isAuthenticated, isLoading, signInUrl, user, accessToken } = useSession();
   const [metrics, setMetrics] = useState<UserMetrics | null>(null);
   const [referralCount, setReferralCount] = useState<number | null>(null);
   const [referralUrl, setReferralUrl] = useState<string>('');
@@ -33,7 +33,11 @@ export default function HomePage() {
         setReferralUrl(buildReferralLink(user.id));
       }
 
-      const response = await fetch(`/api/referral?referrerId=${encodeURIComponent(user.id)}`);
+      const response = await fetch('/api/referral', {
+        headers: {
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+      });
       if (response.ok) {
         const data = await response.json();
         if (active) {

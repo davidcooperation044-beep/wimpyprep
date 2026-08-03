@@ -6,6 +6,7 @@ import { createClient, type Session, type User } from '@supabase/supabase-js';
 type SessionContextValue = {
   session: Session | null;
   user: User | null;
+  accessToken: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   signInUrl: string;
@@ -44,6 +45,7 @@ function createSupabaseClient() {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [signInUrl, setSignInUrl] = useState('');
 
@@ -95,6 +97,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         if (!error) {
           setSession(nextSession);
           setUser(nextSession?.user ?? null);
+          setAccessToken(nextSession?.access_token ?? null);
         }
       } finally {
         setIsLoading(false);
@@ -106,6 +109,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
+      setAccessToken(nextSession?.access_token ?? null);
     });
 
     return () => {
@@ -114,7 +118,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!user || typeof window === 'undefined') {
+    if (!user || !accessToken || typeof window === 'undefined') {
       return;
     }
 
@@ -126,22 +130,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const registerReferral = async () => {
       await fetch('/api/referral', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({ referrerId: pendingReferral, referredId: user.id }),
       });
       sessionStorage.removeItem('wimpy_referral');
     };
 
     void registerReferral();
-  }, [user]);
+  }, [accessToken, user]);
 
   const value = useMemo<SessionContextValue>(() => ({
     session,
     user,
+    accessToken,
     isLoading,
     isAuthenticated: Boolean(user),
     signInUrl,
-  }), [isLoading, session, signInUrl, user]);
+  }), [accessToken, isLoading, session, signInUrl, user]);
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }

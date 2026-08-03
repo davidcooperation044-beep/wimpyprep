@@ -12,7 +12,7 @@ type LeaderboardRow = {
 };
 
 export default function LeaderboardPage() {
-  const { user, isAuthenticated, isLoading, signInUrl } = useSession();
+  const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
   const [personalRank, setPersonalRank] = useState<number | null>(null);
 
@@ -28,7 +28,11 @@ export default function LeaderboardPage() {
 
     let active = true;
     const loadLeaderboard = async () => {
-      const response = await fetch(`/api/leaderboard?userId=${encodeURIComponent(user.id)}`);
+      const response = await fetch('/api/leaderboard', {
+        headers: {
+          Authorization: `Bearer ${accessToken ?? ''}`,
+        },
+      });
       if (!response.ok) {
         return;
       }

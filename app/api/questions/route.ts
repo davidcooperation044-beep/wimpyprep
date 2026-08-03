@@ -1,7 +1,33 @@
 import { NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '../../../lib/supabase';
 
+async function getVerifiedUserId(request: Request) {
+  const authorization = request.headers.get('Authorization') ?? '';
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  const token = match[1];
+  const supabase = createServiceSupabaseClient();
+  if (!supabase) {
+    return null;
+  }
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) {
+    return null;
+  }
+
+  return data.user.id;
+}
+
 export async function GET(request: Request) {
+  const userId = await getVerifiedUserId(request);
+  if (!userId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const url = new URL(request.url);
   const subjectId = url.searchParams.get('subjectId');
 
@@ -16,7 +42,7 @@ export async function GET(request: Request) {
 
   const { data, error } = await supabase
     .from('wp_questions')
-    .select('id,topic,question_text,options,correct_option,explanation')
+    .select('id,topic,question_text,options')
     .eq('subject_id', subjectId)
     .limit(40);
 

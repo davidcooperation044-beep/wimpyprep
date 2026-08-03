@@ -65,11 +65,102 @@ alter table public.wp_sessions enable row level security;
 alter table public.wp_streaks enable row level security;
 alter table public.wp_referrals enable row level security;
 
-create policy if not exists wp_subjects_select_public on public.wp_subjects for select using (true);
-create policy if not exists wp_subjects_write_service on public.wp_subjects for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
-create policy if not exists wp_questions_select_public on public.wp_questions for select using (true);
-create policy if not exists wp_questions_write_service on public.wp_questions for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
-create policy if not exists wp_attempts_owner on public.wp_attempts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy if not exists wp_sessions_owner on public.wp_sessions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy if not exists wp_streaks_owner on public.wp_streaks for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
-create policy if not exists wp_referrals_owner on public.wp_referrals for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+do $$
+begin
+  if not exists (
+    select 1 from pg_policy
+    where polname = 'wp_subjects_select_public'
+      and polrelid = 'public.wp_subjects'::regclass
+  ) then
+    create policy wp_subjects_select_public on public.wp_subjects for select using (true);
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policy
+    where polname = 'wp_subjects_write_service'
+      and polrelid = 'public.wp_subjects'::regclass
+  ) then
+    create policy wp_subjects_write_service on public.wp_subjects for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policy
+    where polname = 'wp_questions_select_public'
+      and polrelid = 'public.wp_questions'::regclass
+  ) then
+    create policy wp_questions_select_public on public.wp_questions for select using (true);
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policy
+    where polname = 'wp_questions_write_service'
+      and polrelid = 'public.wp_questions'::regclass
+  ) then
+    create policy wp_questions_write_service on public.wp_questions for all using (auth.role() = 'service_role') with check (auth.role() = 'service_role');
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policy
+    where polname = 'wp_attempts_owner'
+      and polrelid = 'public.wp_attempts'::regclass
+  ) then
+    create policy wp_attempts_owner on public.wp_attempts for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policy
+    where polname = 'wp_sessions_owner'
+      and polrelid = 'public.wp_sessions'::regclass
+  ) then
+    create policy wp_sessions_owner on public.wp_sessions for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policy
+    where polname = 'wp_streaks_owner'
+      and polrelid = 'public.wp_streaks'::regclass
+  ) then
+    create policy wp_streaks_owner on public.wp_streaks for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  end if;
+end;
+$$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policy
+    where polname = 'wp_referrals_owner'
+      and polrelid = 'public.wp_referrals'::regclass
+  ) then
+    create policy wp_referrals_owner on public.wp_referrals for all using (
+      auth.uid() = referrer_id or auth.uid() = referred_id
+    ) with check (
+      auth.uid() = referrer_id or auth.uid() = referred_id
+    );
+  end if;
+end;
+$$;

@@ -1,12 +1,31 @@
 import { NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '../../../lib/supabase';
 
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const userId = url.searchParams.get('userId');
+async function getVerifiedUserId(request: Request) {
+  const authorization = request.headers.get('Authorization') ?? '';
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (!match) {
+    return null;
+  }
 
+  const token = match[1];
+  const supabase = createServiceSupabaseClient();
+  if (!supabase) {
+    return null;
+  }
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) {
+    return null;
+  }
+
+  return data.user.id;
+}
+
+export async function GET(request: Request) {
+  const userId = await getVerifiedUserId(request);
   if (!userId) {
-    return NextResponse.json({ error: 'userId query parameter is required' }, { status: 400 });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const supabase = createServiceSupabaseClient();
