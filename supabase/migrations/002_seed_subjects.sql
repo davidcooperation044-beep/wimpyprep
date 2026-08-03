@@ -1,0 +1,21 @@
+insert into public.wp_subjects (name, exam_type) values
+  ('English Language', 'jamb'),
+  ('Mathematics', 'jamb'),
+  ('Physics', 'jamb'),
+  ('Chemistry', 'jamb'),
+  ('Biology', 'jamb'),
+  ('Economics', 'jamb'),
+  ('Government', 'jamb'),
+  ('Literature in English', 'jamb'),
+  ('Geography', 'jamb'),
+  ('Commerce', 'jamb'),
+  ('Accounting', 'jamb'),
+  ('English Language', 'waec'),
+  ('Mathematics', 'waec'),
+  ('Physics', 'waec'),
+  ('Chemistry', 'waec'),
+  ('Biology', 'waec'),
+  ('Economics', 'waec'),
+  ('Government', 'waec'),
+  ('Geography', 'waec')
+on conflict do nothing;

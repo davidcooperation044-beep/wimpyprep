@@ -55,14 +55,22 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'ALOC access token or Supabase service role is not configured.' }, { status: 500 });
   }
 
-  const subjectResponse = await serviceSupabase.from('wp_subjects').select('id,name').eq('name', subject).maybeSingle();
+  let subjectResponse = await serviceSupabase.from('wp_subjects').select('id,name').eq('name', subject).maybeSingle();
   if (subjectResponse.error) {
     return NextResponse.json({ error: subjectResponse.error.message }, { status: 500 });
   }
 
-  const subjectId = subjectResponse.data?.id;
+  let subjectId = subjectResponse.data?.id;
   if (!subjectId) {
-    return NextResponse.json({ error: `Subject ${subject} was not found in wp_subjects.` }, { status: 404 });
+    const insertResponse = await serviceSupabase
+      .from('wp_subjects')
+      .insert({ name: subject, exam_type: examType })
+      .select('id,name')
+      .single();
+    if (insertResponse.error) {
+      return NextResponse.json({ error: `Could not create subject ${subject}: ${insertResponse.error.message}` }, { status: 500 });
+    }
+    subjectId = insertResponse.data.id;
   }
 
   const alocResponse = await fetch(`https://questions.aloc.com.ng/api/questions?subject=${encodeURIComponent(subject)}&exam_type=${encodeURIComponent(examType)}`, {

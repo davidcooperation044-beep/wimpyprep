@@ -8,7 +8,7 @@ export async function getSubscriptionStatus(supabase: SupabaseClient, userId: st
     .from('subscriptions')
     .select('status')
     .eq('user_id', userId)
-    .in('status', ['active', 'trialing'])
+    .eq('status', 'active')
     .limit(1)
     .single();
 
