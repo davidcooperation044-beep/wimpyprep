@@ -25,6 +25,24 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
 
+  if (requestUrl.origin !== self.location.origin) {
+    return;
+  }
+
+  if (event.request.method !== 'GET') {
+    return;
+  }
+
+  if (
+    requestUrl.pathname.startsWith('/_next/') ||
+    requestUrl.pathname.startsWith('/static/') ||
+    requestUrl.pathname === '/sw.js' ||
+    requestUrl.pathname === '/manifest.json' ||
+    requestUrl.pathname === '/icon.svg'
+  ) {
+    return;
+  }
+
   if (requestUrl.pathname === '/api/questions') {
     event.respondWith(
       fetch(event.request)
@@ -35,10 +53,6 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => caches.match(event.request))
     );
-    return;
-  }
-
-  if (event.request.method !== 'GET') {
     return;
   }
 

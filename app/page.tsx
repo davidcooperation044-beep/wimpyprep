@@ -11,11 +11,15 @@ const subjects = ['English', 'Mathematics', 'Physics', 'Biology'];
 
 export default function HomePage() {
   const { isAuthenticated, isLoading, signInUrl, user, accessToken } = useSession();
+  const [signupUrl, setSignupUrl] = useState('');
   const [metrics, setMetrics] = useState<UserMetrics | null>(null);
   const [referralCount, setReferralCount] = useState<number | null>(null);
   const [referralUrl, setReferralUrl] = useState<string>('');
 
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setSignupUrl(`https://id.wimpy-corp.com.ng/signup?redirect=${encodeURIComponent(window.location.href)}`);
+    }
     if (!isAuthenticated || !user) {
       return;
     }
@@ -73,7 +77,10 @@ export default function HomePage() {
         ) : (
           <div className="feedback">
             <p>Sign in to track your progress, streaks, and mock-exam history.</p>
-            <a href={signInUrl} className="button primary">Sign in with WimpyID</a>
+            <div className="hero-actions">
+              <a href={signInUrl} className="button primary">Sign in with WimpyID</a>
+              <a href={signupUrl || 'https://id.wimpy-corp.com.ng/signup'} className="button secondary">Sign up with WimpyID</a>
+            </div>
           </div>
         )}
 
