@@ -91,6 +91,7 @@ export default function HomePage() {
               <Link href="/mock" className="button secondary">Take Mock Exam</Link>
               <Link href="/dashboard" className="button outline">Open Dashboard</Link>
               <Link href="/leaderboard" className="button outline">View Leaderboard</Link>
+              <Link href="/battle" className="button secondary">Live Exam Battle</Link>
               <Link href="/" className="button secondary theme-toggle-placeholder">Theme</Link>
             </>
           ) : (

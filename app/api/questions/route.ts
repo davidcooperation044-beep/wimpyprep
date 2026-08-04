@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '../../../lib/supabase';
+import { isPremiumYear, PREMIUM_YEAR_START } from '../../../lib/premium';
 
 async function getVerifiedUserId(request: Request) {
   const authorization = request.headers.get('Authorization') ?? '';
@@ -30,6 +31,8 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const subjectId = url.searchParams.get('subjectId');
+  const yearParam = url.searchParams.get('year');
+  const year = yearParam ? Number(yearParam) : null;
 
   if (!subjectId) {
     return NextResponse.json({ error: 'subjectId is required' }, { status: 400 });
@@ -40,15 +43,47 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Supabase service client is not configured' }, { status: 500 });
   }
 
-  const { data, error } = await supabase
+  const { data: subscriptionData, error: subscriptionError } = await supabase
+    .from('subscriptions')
+    .select('status')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+
+  if (subscriptionError && subscriptionError.code !== 'PGRST116') {
+    return NextResponse.json({ error: 'Unable to verify subscription access' }, { status: 500 });
+  }
+
+  const isPro = Boolean(subscriptionData);
+
+  let query = supabase
     .from('wp_questions')
-    .select('id,topic,question_text,options')
+    .select('id,topic,question_text,options,year')
     .eq('subject_id', subjectId)
     .limit(40);
+
+  if (year !== null && Number.isFinite(year)) {
+    query = query.eq('year', year);
+  }
+
+  if (!isPro) {
+    query = query.or(`year.is.null,year.lt.${PREMIUM_YEAR_START}`);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     return NextResponse.json({ error: 'Unable to load questions for this subject' }, { status: 500 });
   }
 
-  return NextResponse.json({ questions: data ?? [] });
+  const questions = (data ?? []).filter((question) => {
+    if (!isPremiumYear(question.year)) {
+      return true;
+    }
+
+    return isPro;
+  });
+
+  return NextResponse.json({ questions, isPro, premiumYearSelected: Boolean(year && isPremiumYear(year)) });
 }

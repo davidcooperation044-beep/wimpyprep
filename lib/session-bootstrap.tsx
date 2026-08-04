@@ -1,7 +1,8 @@
 'use client';
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { createClient, type Session, type User } from '@supabase/supabase-js';
+import type { Session, User } from '@supabase/supabase-js';
+import { createPublicSupabaseClient } from './supabase';
 
 type SessionContextValue = {
   session: Session | null;
@@ -26,22 +27,6 @@ function buildWimpyIdSignInUrl() {
   return `https://id.wimpy-corp.com.ng/login?redirect=${encodeURIComponent(getCurrentAppUrl())}`;
 }
 
-function createSupabaseClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    return null;
-  }
-
-  return createClient(supabaseUrl, supabaseAnonKey, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-    },
-  });
-}
-
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -50,7 +35,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [signInUrl, setSignInUrl] = useState('');
 
   useEffect(() => {
-    const supabase = createSupabaseClient();
+    const supabase = createPublicSupabaseClient();
     const nextSignInUrl = buildWimpyIdSignInUrl();
     setSignInUrl(nextSignInUrl);
 

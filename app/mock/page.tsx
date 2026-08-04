@@ -49,6 +49,8 @@ export default function MockPage() {
   const [userSubjectIds, setUserSubjectIds] = useState<string[]>([]);
   const [isSubjectSelectionReady, setIsSubjectSelectionReady] = useState(false);
   const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
+  const userId = user?.id ?? null;
+  const subjectIdsList = useMemo(() => subjects.map((subject) => subject.id), [subjects]);
 
   useEffect(() => {
     const supabase = createPublicSupabaseClient();
@@ -110,7 +112,7 @@ export default function MockPage() {
 
     void loadSubscription();
     void loadUserSubjects();
-  }, [accessToken, isAuthenticated, selectedSubjectId, subjects, user]);
+  }, [accessToken, isAuthenticated, selectedSubjectId, subjectIdsList, userId]);
 
   useEffect(() => {
     if (!selectedSubjectId || !isAuthenticated || !user || isSubscriptionLoading) {
@@ -156,7 +158,7 @@ export default function MockPage() {
     };
 
     void loadQuestions();
-  }, [isAuthenticated, selectedSubjectId, user, isPro, isSubscriptionLoading]);
+  }, [accessToken, isAuthenticated, isPro, isSubscriptionLoading, selectedSubjectId, userId]);
 
   useEffect(() => {
     if (!isAuthenticated || !user || !selectedSubjectId || !questions.length || sessionId) {

@@ -53,6 +53,8 @@ export default function PracticePage() {
   const [offlineError, setOfflineError] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
   const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
+  const userId = user?.id ?? null;
+  const subjectIdsList = useMemo(() => subjects.map((subject) => subject.id), [subjects]);
 
   useEffect(() => {
     const supabase = createPublicSupabaseClient();
@@ -121,9 +123,7 @@ export default function PracticePage() {
 
     void loadSubscription();
     void loadUserSubjects();
-
-    void loadSubscription();
-  }, [accessToken, isAuthenticated, selectedSubjectId, subjects, user]);
+  }, [accessToken, isAuthenticated, selectedSubjectId, subjectIdsList, userId]);
 
   useEffect(() => {
     if (!selectedSubjectId || !isAuthenticated || !user || isSubscriptionLoading) {
@@ -171,7 +171,7 @@ export default function PracticePage() {
     };
 
     void loadQuestions();
-  }, [isAuthenticated, selectedSubjectId, user, isPro, practiceCount, isSubscriptionLoading]);
+  }, [accessToken, isAuthenticated, isPro, isSubscriptionLoading, practiceCount, selectedSubjectId, userId]);
 
   useEffect(() => {
     if (!selectedSubjectId || !questions.length || !isAuthenticated || !user || sessionId) {

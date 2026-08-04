@@ -46,7 +46,7 @@ export async function loadUserMetrics(supabase: SupabaseClient, userId: string):
     .from('wp_streaks')
     .select('user_id,current_streak,longest_streak,last_active_date,updated_at')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
 
   const { data: attemptsData } = await supabase
     .from('wp_attempts')
@@ -74,7 +74,7 @@ export async function updateStreakAfterSession(supabase: SupabaseClient, userId:
     .from('wp_streaks')
     .select('current_streak,longest_streak,last_active_date')
     .eq('user_id', userId)
-    .single();
+    .maybeSingle();
 
   if (selectError && selectError.code !== 'PGRST116') {
     return null;
