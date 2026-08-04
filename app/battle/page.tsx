@@ -4,13 +4,49 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useSession } from '../../lib/session-bootstrap';
 
+async function createBattleLobby(subjectId: string, year: string, userId: string) {
+  const response = await fetch('/api/battle', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ subjectId, year, userId }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Unable to join a battle lobby right now.');
+  }
+
+  return response.json();
+}
+
 export default function BattlePage() {
   const { isAuthenticated, user, signInUrl } = useSession();
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
   const [year, setYear] = useState('');
   const [isJoining, setIsJoining] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [joinedLobby, setJoinedLobby] = useState<string | null>(null);
 
   const canJoin = useMemo(() => Boolean(isAuthenticated && user && selectedSubjectId), [isAuthenticated, selectedSubjectId, user]);
+
+  const handleJoinLobby = async () => {
+    if (!user || !canJoin) {
+      return;
+    }
+
+    setIsJoining(true);
+    setJoinError(null);
+
+    try {
+      const result = await createBattleLobby(selectedSubjectId, year, user.id);
+      setJoinedLobby(result?.lobbyId ?? 'joined');
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : 'Unable to join a battle lobby.');
+    } finally {
+      setIsJoining(false);
+    }
+  };
 
   if (!isAuthenticated) {
     return (
@@ -53,11 +89,13 @@ export default function BattlePage() {
             </select>
           </label>
           <div className="actions">
-            <button className="button primary" type="button" disabled={!canJoin || isJoining} onClick={() => setIsJoining(true)}>
+            <button className="button primary" type="button" disabled={!canJoin || isJoining} onClick={() => void handleJoinLobby()}>
               {isJoining ? 'Joining…' : 'Join lobby'}
             </button>
             <Link href="/practice" className="button secondary">Practice instead</Link>
           </div>
+          {joinError ? <p className="meta alert-text" style={{ marginTop: 12 }}>{joinError}</p> : null}
+          {joinedLobby ? <p className="meta" style={{ marginTop: 12 }}>Lobby ready: {joinedLobby}</p> : null}
           <p className="meta" style={{ marginTop: 12 }}>
             Premium-year matches are gated for Pro subscribers and will unlock once you upgrade.
           </p>

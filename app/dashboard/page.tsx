@@ -99,7 +99,7 @@ export default function DashboardPage() {
   const [subjectSelectionCount, setSubjectSelectionCount] = useState(0);
 
   useEffect(() => {
-    if (!isAuthenticated || !user) {
+    if (!isAuthenticated || !user || !accessToken) {
       return;
     }
 
@@ -129,7 +129,7 @@ export default function DashboardPage() {
     return () => {
       active = false;
     };
-  }, [isAuthenticated, user]);
+  }, [accessToken, isAuthenticated, user]);
 
   if (isLoading) {
     return (

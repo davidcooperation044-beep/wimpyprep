@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ProgressRing } from './components/progress-ring';
+import ThemeToggle from './components/theme-toggle';
 import { useSession } from '../lib/session-bootstrap';
 import { createPublicSupabaseClient } from '../lib/supabase';
 import { buildReferralLink, loadUserMetrics, type UserMetrics } from '../lib/user-metrics';
@@ -161,7 +162,7 @@ export default function HomePage() {
               <Link href="/dashboard" className="button outline">Open Dashboard</Link>
               <Link href="/leaderboard" className="button outline">View Leaderboard</Link>
               <Link href="/battle" className="button secondary">Live Exam Battle</Link>
-              <Link href="/" className="button secondary theme-toggle-placeholder">Theme</Link>
+              <ThemeToggle />
             </>
           ) : (
             <span className="meta">Practice and mock modes are locked until you sign in.</span>
