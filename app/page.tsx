@@ -15,6 +15,7 @@ export default function HomePage() {
   const [metrics, setMetrics] = useState<UserMetrics | null>(null);
   const [referralCount, setReferralCount] = useState<number | null>(null);
   const [referralUrl, setReferralUrl] = useState<string>('');
+  const [progressValue, setProgressValue] = useState(0);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -35,6 +36,7 @@ export default function HomePage() {
       if (active) {
         setMetrics(loaded);
         setReferralUrl(buildReferralLink(user.id));
+        setProgressValue(Math.round(loaded.accuracy * 100));
       }
 
       const response = await fetch('/api/referral', {
@@ -111,7 +113,7 @@ export default function HomePage() {
           </div>
         ) : null}
 
-        <ProgressRing value={74} label="session progress" />
+        <ProgressRing value={progressValue} label="session progress" />
       </section>
 
       <section className="panel">

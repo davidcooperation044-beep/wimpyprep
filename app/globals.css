@@ -115,7 +115,8 @@ h1 { font-size: clamp(2rem, 4vw, 3rem); line-height: 1.05; margin: 8px 0 12px; }
 .meta { color: rgba(247,247,251,0.8); }
 .question-text { font-size: 1.1rem; margin: 8px 0 14px; }
 .options-list { display: grid; gap: 10px; }
-.option { border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: var(--text); padding: 12px 14px; border-radius: 14px; text-align: left; cursor: pointer; }
+.option { border: 1px solid rgba(255,255,255,0.12); background: rgba(0, 0, 0, 0.35); color: #ffffff; padding: 12px 14px; border-radius: 14px; text-align: left; cursor: pointer; }
+.option:focus, .option:active { outline: 2px solid rgba(255,255,255,0.4); outline-offset: 2px; }
 .feedback { margin-top: 14px; padding: 14px; border-radius: 16px; background: rgba(196,241,53,0.1); }
 .chart-wrap { overflow-x: auto; padding: 12px 0; }
 .chart-svg { width: 100%; height: 240px; display: block; }

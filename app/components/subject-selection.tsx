@@ -64,10 +64,16 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
         return;
       }
 
-      const nextSelection = selections.map((selection: { subject_id: string; exam_type: string }) => {
-        const subject = subjects.find((item) => item.id === selection.subject_id);
-        return subject?.name ?? null;
-      }).filter(Boolean) as string[];
+      const nextSelection = Array.from(
+        new Set(
+          selections
+            .map((selection: { subject_id: string; exam_type: string }) => {
+              const subject = subjects.find((item) => item.id === selection.subject_id);
+              return subject?.name ?? null;
+            })
+            .filter(Boolean) as string[]
+        )
+      );
 
       if (nextSelection.length) {
         setSelected(nextSelection);
@@ -118,10 +124,6 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
   }, [examType, selected]);
 
   const toggleSubject = (subjectName: string) => {
-    if (examType === 'jamb' && subjectName === 'English') {
-      return;
-    }
-
     setSelected((current) => {
       if (current.includes(subjectName)) {
         if (examType === 'jamb' && subjectName === 'English') {
@@ -134,7 +136,6 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
         if (current.length >= 4) {
           return current;
         }
-        return [...current, subjectName];
       }
 
       return [...current, subjectName];
@@ -150,9 +151,13 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
     setError(null);
 
     try {
-      const selectedIds = subjects
-        .filter((subject) => selected.includes(subject.name))
-        .map((subject) => subject.id);
+      const selectedIds = Array.from(
+        new Set(
+          subjects
+            .filter((subject) => selected.includes(subject.name))
+            .map((subject) => subject.id)
+        )
+      );
 
       const payload = selectedIds.flatMap((subjectId) => {
         const subject = subjects.find((item) => item.id === subjectId);
