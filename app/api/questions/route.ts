@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServiceSupabaseClient } from '../../../lib/supabase';
 import { isPremiumYear, PREMIUM_YEAR_START } from '../../../lib/premium';
+import { ingestQuestionsForSubject } from '../../../lib/aloc-ingestion';
 
 async function getVerifiedUserId(request: Request) {
   const authorization = request.headers.get('Authorization') ?? '';
@@ -59,41 +60,58 @@ export async function GET(request: Request) {
 
   const { data: subjectRow, error: subjectError } = await supabase
     .from('wp_subjects')
-    .select('id,name')
+    .select('id,name,exam_type')
     .eq('id', subjectId)
     .maybeSingle();
 
-  let query = supabase
-    .from('wp_questions')
-    .select('id,topic,question_text,options,year')
-    .eq('subject_id', subjectId)
-    .limit(40);
+  let resolvedSubjectId = subjectId;
+  let resolvedSubjectName = subjectId;
+  let resolvedExamType: string | null = null;
 
-  if (!subjectRow && !subjectError) {
+  if (subjectRow?.id) {
+    resolvedSubjectId = subjectRow.id;
+    resolvedSubjectName = subjectRow.name ?? subjectId;
+    resolvedExamType = subjectRow.exam_type ?? null;
+  } else if (!subjectError) {
     const { data: subjectByName, error: subjectByNameError } = await supabase
       .from('wp_subjects')
-      .select('id,name')
+      .select('id,name,exam_type')
       .eq('name', subjectId)
       .maybeSingle();
 
     if (!subjectByNameError && subjectByName?.id) {
-      query = supabase
-        .from('wp_questions')
-        .select('id,topic,question_text,options,year')
-        .eq('subject_id', subjectByName.id)
-        .limit(40);
+      resolvedSubjectId = subjectByName.id;
+      resolvedSubjectName = subjectByName.name ?? subjectId;
+      resolvedExamType = subjectByName.exam_type ?? null;
     }
   }
 
-  if (year !== null && Number.isFinite(year)) {
-    query = query.eq('year', year);
-  }
+  const buildQuery = (resolvedSubject: string) => {
+    let query = supabase
+      .from('wp_questions')
+      .select('id,topic,question_text,options,year')
+      .eq('subject_id', resolvedSubject)
+      .limit(40);
 
-  if (!isPro) {
-    query = query.or(`year.is.null,year.lt.${PREMIUM_YEAR_START}`);
-  }
+    if (year !== null && Number.isFinite(year)) {
+      query = query.eq('year', year);
+    }
 
-  const { data, error } = await query;
+    if (!isPro) {
+      query = query.or(`year.is.null,year.lt.${PREMIUM_YEAR_START}`);
+    }
+
+    return query;
+  };
+
+  let { data, error } = await buildQuery(resolvedSubjectId);
+
+  if (!error && (!data || !data.length) && resolvedSubjectName) {
+    const ingestionResult = await ingestQuestionsForSubject(resolvedSubjectName, resolvedExamType ?? 'jamb');
+    if (ingestionResult.ok) {
+      ({ data, error } = await buildQuery(resolvedSubjectId));
+    }
+  }
 
   if (error) {
     return NextResponse.json({ error: 'Unable to load questions for this subject' }, { status: 500 });
@@ -114,6 +132,9 @@ export async function GET(request: Request) {
       premiumYearSelected: Boolean(year && isPremiumYear(year)),
       debug: {
         subjectId,
+        resolvedSubjectId,
+        resolvedSubjectName,
+        resolvedExamType,
         subjectRow: subjectRow ?? null,
       },
     });
