@@ -457,7 +457,10 @@ export default function PracticePage() {
           <UpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} onSuccess={() => setShowUpgradeModal(false)} />
           </div>
         ) : !question ? (
-          <p className="lead">No questions are available for this subject yet. Import a question set first.</p>
+          <div className="panel">
+            <p className="lead">No questions are available for this subject yet.</p>
+            <p className="meta">The questions API is currently returning an empty result for this subject, so there is nothing to display yet.</p>
+          </div>
         ) : (
           <>
             <div className="panel-header">
