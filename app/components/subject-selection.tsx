@@ -92,8 +92,18 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
     void loadSelection();
   }, [accessToken, examType, subjects, user]);
 
+  const distinctSubjects = useMemo(() => {
+    const map = new Map<string, SubjectOption>();
+    for (const subject of subjects) {
+      if (!map.has(subject.name)) {
+        map.set(subject.name, subject);
+      }
+    }
+    return Array.from(map.values());
+  }, [subjects]);
+
   const availableOptions = useMemo(() => {
-    const base = subjects.filter((subject) => {
+    const base = distinctSubjects.filter((subject) => {
       if (examType === 'jamb') {
         return subject.name === 'English' || JAMB_ELECTIVE_OPTIONS.includes(subject.name);
       }
@@ -105,11 +115,11 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
 
     const selectedNames = new Set(selected);
     return base.filter((subject) => !selectedNames.has(subject.name));
-  }, [examType, selected, subjects]);
+  }, [examType, selected, distinctSubjects]);
 
   const selectedSubjectNames = useMemo(() => {
-    return subjects.filter((subject) => selected.includes(subject.name)).map((subject) => subject.name);
-  }, [selected, subjects]);
+    return Array.from(new Set(distinctSubjects.filter((subject) => selected.includes(subject.name)).map((subject) => subject.name)));
+  }, [selected, distinctSubjects]);
 
   const canSubmit = useMemo(() => {
     if (examType === 'jamb') {
@@ -153,7 +163,7 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
     try {
       const selectedIds = Array.from(
         new Set(
-          subjects
+          distinctSubjects
             .filter((subject) => selected.includes(subject.name))
             .map((subject) => subject.id)
         )

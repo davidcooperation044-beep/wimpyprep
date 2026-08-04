@@ -9,7 +9,7 @@ export async function getSubscriptionStatus(supabase: SupabaseClient, userId: st
     .eq('user_id', userId)
     .eq('status', 'active')
     .limit(1)
-    .single();
+    .maybeSingle();
 
   if (error) {
     return { active: false, error };
