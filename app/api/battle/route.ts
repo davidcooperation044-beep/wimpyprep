@@ -4,47 +4,55 @@ import { ingestQuestionsForSubject } from '../../../lib/aloc-ingestion';
 import { createServiceSupabaseClient } from '../../../lib/supabase';
 
 async function ensureQuestionIds(supabase: NonNullable<ReturnType<typeof createServiceSupabaseClient>>, subjectId: string, year: number | null) {
-  const fallbackQuery = supabase
-    .from('wp_questions')
-    .select('id')
-    .eq('subject_id', subjectId)
-    .limit(24);
+  try {
+    const fallbackQuery = supabase
+      .from('wp_questions')
+      .select('id')
+      .eq('subject_id', subjectId)
+      .limit(24);
 
-  let questionQuery = fallbackQuery;
-  if (year !== null) {
-    questionQuery = supabase.from('wp_questions').select('id').eq('subject_id', subjectId).eq('year', year).limit(24);
-  }
-
-  const { data: directQuestions, error: directError } = await questionQuery;
-  if (!directError && (directQuestions?.length ?? 0) > 0) {
-    return (directQuestions ?? []).map((question) => question.id).slice(0, 10);
-  }
-
-  if (year !== null) {
-    const { data: fallbackQuestions, error: fallbackError } = await fallbackQuery;
-    if (!fallbackError && (fallbackQuestions?.length ?? 0) > 0) {
-      return (fallbackQuestions ?? []).map((question) => question.id).slice(0, 10);
+    let questionQuery = fallbackQuery;
+    if (year !== null) {
+      questionQuery = supabase.from('wp_questions').select('id').eq('subject_id', subjectId).eq('year', year).limit(24);
     }
-  }
 
-  const subjectResponse = await supabase.from('wp_subjects').select('name,exam_type').eq('id', subjectId).maybeSingle();
-  if (!subjectResponse.error && subjectResponse.data?.name) {
-    const ingestionResult = await ingestQuestionsForSubject(subjectResponse.data.name, subjectResponse.data.exam_type ?? 'jamb');
-    if (ingestionResult.ok) {
-      const { data: reloadedQuestions, error: reloadError } = await supabase.from('wp_questions').select('id').eq('subject_id', subjectId).limit(24);
-      if (!reloadError && (reloadedQuestions?.length ?? 0) > 0) {
-        return (reloadedQuestions ?? []).map((question) => question.id).slice(0, 10);
+    const { data: directQuestions, error: directError } = await questionQuery;
+    if (!directError && (directQuestions?.length ?? 0) > 0) {
+      return (directQuestions ?? []).map((question) => question.id).slice(0, 10);
+    }
+
+    if (year !== null) {
+      const { data: fallbackQuestions, error: fallbackError } = await fallbackQuery;
+      if (!fallbackError && (fallbackQuestions?.length ?? 0) > 0) {
+        return (fallbackQuestions ?? []).map((question) => question.id).slice(0, 10);
       }
-    } else {
-      console.error('[battle-route]', {
-        subjectId,
-        subjectName: subjectResponse.data.name,
-        ingestionError: ingestionResult.error,
-      });
     }
-  }
 
-  return [];
+    const subjectResponse = await supabase.from('wp_subjects').select('name,exam_type').eq('id', subjectId).maybeSingle();
+    if (!subjectResponse.error && subjectResponse.data?.name) {
+      const ingestionResult = await ingestQuestionsForSubject(subjectResponse.data.name, subjectResponse.data.exam_type ?? 'jamb');
+      if (ingestionResult.ok) {
+        const { data: reloadedQuestions, error: reloadError } = await supabase.from('wp_questions').select('id').eq('subject_id', subjectId).limit(24);
+        if (!reloadError && (reloadedQuestions?.length ?? 0) > 0) {
+          return (reloadedQuestions ?? []).map((question) => question.id).slice(0, 10);
+        }
+      } else {
+        console.error('[battle-route]', {
+          subjectId,
+          subjectName: subjectResponse.data.name,
+          ingestionError: ingestionResult.error,
+        });
+      }
+    }
+
+    return [];
+  } catch (error) {
+    console.error('[battle-route] Unable to ensure question ids', {
+      subjectId,
+      error: error instanceof Error ? error.message : 'Unknown question-id error',
+    });
+    return [];
+  }
 }
 
 export async function POST(request: Request) {

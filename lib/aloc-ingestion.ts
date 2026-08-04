@@ -136,144 +136,203 @@ export async function ingestQuestionsForSubject(subject: string, examType: strin
   const token = process.env.ALOC_ACCESS_TOKEN;
   const serviceSupabase = createServiceSupabaseClient();
 
-  if (!token || !serviceSupabase) {
-    const error = 'ALOC access token or Supabase service role is not configured.';
-    console.error('[aloc-ingestion]', { subject, examType, error });
-    return { ok: false, status: 500, error };
-  }
-
-  if (!isValidToken(token)) {
-    const error = `ALOC access token is invalid. Expected a token that starts with ALOC- and contains a 40-character-ish hex-like value.`;
-    console.error('[aloc-ingestion]', { subject, examType, error, token: token.slice(0, 12) });
-    return { ok: false, status: 500, error };
-  }
-
-  const normalizedSubject = normalizeSubjectName(subject);
-  if (!normalizedSubject) {
-    const error = `No valid ALOC subject slug could be derived from ${subject}.`;
-    console.error('[aloc-ingestion]', { subject, examType, error });
-    return { ok: false, status: 400, error };
-  }
-
-  const normalizedExamType = normalizeExamType(examType);
-  let subjectResponse = await serviceSupabase.from('wp_subjects').select('id,name').eq('name', subject).maybeSingle();
-  if (subjectResponse.error && subjectResponse.error.code !== 'PGRST116') {
-    const error = subjectResponse.error.message;
-    console.error('[aloc-ingestion]', { subject, examType, error });
-    return { ok: false, status: 500, error };
-  }
-
-  let subjectId = subjectResponse.data?.id;
-  if (!subjectId) {
-    const normalizedSubject = normalizeSubjectName(subject);
-    const subjectSearchResponse = await serviceSupabase
-      .from('wp_subjects')
-      .select('id,name')
-      .ilike('name', `%${subject}%`)
-      .limit(5);
-    if (!subjectSearchResponse.error && subjectSearchResponse.data?.length) {
-      subjectId = subjectSearchResponse.data[0]?.id;
-    }
-  }
-  if (!subjectId) {
-    const insertResponse = await serviceSupabase
-      .from('wp_subjects')
-      .insert({ name: subject, exam_type: examType })
-      .select('id,name')
-      .single();
-    if (insertResponse.error) {
-      const error = `Could not create subject ${subject}: ${insertResponse.error.message}`;
+  try {
+    if (!token || !serviceSupabase) {
+      const error = 'ALOC access token or Supabase service role is not configured.';
       console.error('[aloc-ingestion]', { subject, examType, error });
       return { ok: false, status: 500, error };
     }
-    subjectId = insertResponse.data.id;
-  }
 
-  const seenQuestions = new Set<string>();
-  const existingQuestionsResponse = await serviceSupabase.from('wp_questions').select('question_text').eq('subject_id', subjectId);
-  if (existingQuestionsResponse.error) {
-    const error = existingQuestionsResponse.error.message;
-    console.error('[aloc-ingestion]', { subject, examType, error });
-    return { ok: false, status: 500, error };
-  }
-
-  for (const row of existingQuestionsResponse.data ?? []) {
-    const text = typeof row.question_text === 'string' ? row.question_text.trim().toLowerCase() : '';
-    if (text) {
-      seenQuestions.add(text);
-    }
-  }
-
-  const normalizedQuestions: Array<{
-    subject_id: string;
-    topic: string;
-    year: number;
-    question_text: string;
-    options: Array<{ label: string; text: string }>;
-    correct_option: string;
-    explanation: string | null;
-    difficulty: number;
-  }> = [];
-
-  const url = new URL(ALOC_API_URL);
-  url.searchParams.set('subject', normalizedSubject);
-  if (normalizedExamType) {
-    url.searchParams.set('type', normalizedExamType);
-  }
-
-  const alocResponse = await fetch(url.toString(), {
-    headers: {
-      AccessToken: token,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-  });
-
-  if (!alocResponse.ok) {
-    const error = `ALOC request failed with ${alocResponse.status} ${alocResponse.statusText}`;
-    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, normalizedExamType, error, status: alocResponse.status, statusText: alocResponse.statusText });
-    return { ok: false, status: 502, error };
-  }
-
-  const payload = await alocResponse.json().catch((reason) => {
-    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error: `Failed to parse ALOC JSON: ${reason}` });
-    return null;
-  });
-
-  const candidates = extractQuestions(payload);
-  if (!candidates.length) {
-    const error = `ALOC returned no usable questions for subject ${normalizedSubject}`;
-    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error, payload });
-    return { ok: false, status: 502, error };
-  }
-
-  for (const record of candidates) {
-    if (normalizedQuestions.length >= MAX_QUESTIONS_PER_SUBJECT) {
-      break;
+    if (!isValidToken(token)) {
+      const error = `ALOC access token is invalid. Expected a token that starts with ALOC- and contains a 40-character-ish hex-like value.`;
+      console.error('[aloc-ingestion]', { subject, examType, error, token: token.slice(0, 12) });
+      return { ok: false, status: 500, error };
     }
 
-    const normalized = normalizeQuestion(record, subjectId);
-    const questionText = normalized.question_text.trim().toLowerCase();
-    if (!questionText || seenQuestions.has(questionText)) {
-      continue;
+    const normalizedSubject = normalizeSubjectName(subject);
+    if (!normalizedSubject) {
+      const error = `No valid ALOC subject slug could be derived from ${subject}.`;
+      console.error('[aloc-ingestion]', { subject, examType, error });
+      return { ok: false, status: 400, error };
     }
 
-    seenQuestions.add(questionText);
-    normalizedQuestions.push(normalized);
-  }
+    const normalizedExamType = normalizeExamType(examType);
+    let subjectResponse;
+    try {
+      subjectResponse = await serviceSupabase.from('wp_subjects').select('id,name').eq('name', subject).maybeSingle();
+    } catch (subjectLookupError) {
+      const error = subjectLookupError instanceof Error ? subjectLookupError.message : 'Unknown subject lookup error';
+      console.error('[aloc-ingestion]', { subject, examType, error });
+      return { ok: false, status: 500, error };
+    }
 
-  if (!normalizedQuestions.length) {
-    const error = `ALOC returned questions but none could be normalized for ${subject}`;
-    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error, payload });
-    return { ok: false, status: 502, error };
-  }
+    if (subjectResponse.error && subjectResponse.error.code !== 'PGRST116') {
+      const error = subjectResponse.error.message;
+      console.error('[aloc-ingestion]', { subject, examType, error });
+      return { ok: false, status: 500, error };
+    }
 
-  const { error: insertError } = await serviceSupabase.from('wp_questions').insert(normalizedQuestions);
-  if (insertError) {
-    const error = insertError.message;
-    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error });
-    return { ok: false, status: 500, error };
-  }
+    let subjectId = subjectResponse.data?.id;
+    if (!subjectId) {
+      let subjectSearchResponse;
+      try {
+        subjectSearchResponse = await serviceSupabase
+          .from('wp_subjects')
+          .select('id,name')
+          .ilike('name', `%${subject}%`)
+          .limit(5);
+      } catch (subjectSearchError) {
+        const error = subjectSearchError instanceof Error ? subjectSearchError.message : 'Unknown subject search error';
+        console.error('[aloc-ingestion]', { subject, examType, error });
+        return { ok: false, status: 500, error };
+      }
 
-  return { ok: true, inserted: normalizedQuestions.length, subject, examType, normalizedSubject, subjectId };
+      if (!subjectSearchResponse.error && subjectSearchResponse.data?.length) {
+        subjectId = subjectSearchResponse.data[0]?.id;
+      }
+    }
+
+    if (!subjectId) {
+      let insertResponse;
+      try {
+        insertResponse = await serviceSupabase
+          .from('wp_subjects')
+          .insert({ name: subject, exam_type: examType })
+          .select('id,name')
+          .single();
+      } catch (insertSubjectError) {
+        const error = insertSubjectError instanceof Error ? insertSubjectError.message : 'Unknown subject insert error';
+        console.error('[aloc-ingestion]', { subject, examType, error });
+        return { ok: false, status: 500, error };
+      }
+
+      if (insertResponse.error) {
+        const error = `Could not create subject ${subject}: ${insertResponse.error.message}`;
+        console.error('[aloc-ingestion]', { subject, examType, error });
+        return { ok: false, status: 500, error };
+      }
+      subjectId = insertResponse.data.id;
+    }
+
+    const seenQuestions = new Set<string>();
+    let existingQuestionsResponse;
+    try {
+      existingQuestionsResponse = await serviceSupabase.from('wp_questions').select('question_text').eq('subject_id', subjectId);
+    } catch (existingQuestionsError) {
+      const error = existingQuestionsError instanceof Error ? existingQuestionsError.message : 'Unknown existing questions lookup error';
+      console.error('[aloc-ingestion]', { subject, examType, error });
+      return { ok: false, status: 500, error };
+    }
+
+    if (existingQuestionsResponse.error) {
+      const error = existingQuestionsResponse.error.message;
+      console.error('[aloc-ingestion]', { subject, examType, error });
+      return { ok: false, status: 500, error };
+    }
+
+    for (const row of existingQuestionsResponse.data ?? []) {
+      const text = typeof row.question_text === 'string' ? row.question_text.trim().toLowerCase() : '';
+      if (text) {
+        seenQuestions.add(text);
+      }
+    }
+
+    const normalizedQuestions: Array<{
+      subject_id: string;
+      topic: string;
+      year: number;
+      question_text: string;
+      options: Array<{ label: string; text: string }>;
+      correct_option: string;
+      explanation: string | null;
+      difficulty: number;
+    }> = [];
+
+    const url = new URL(ALOC_API_URL);
+    url.searchParams.set('subject', normalizedSubject);
+    if (normalizedExamType) {
+      url.searchParams.set('type', normalizedExamType);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+
+    let alocResponse: Response;
+    try {
+      alocResponse = await fetch(url.toString(), {
+        headers: {
+          AccessToken: token,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      });
+    } catch (fetchError) {
+      const error = fetchError instanceof Error ? fetchError.message : 'Unknown network error calling ALOC';
+      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error });
+      return { ok: false, status: 502, error };
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (!alocResponse.ok) {
+      const error = `ALOC request failed with ${alocResponse.status} ${alocResponse.statusText}`;
+      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, normalizedExamType, error, status: alocResponse.status, statusText: alocResponse.statusText });
+      return { ok: false, status: 502, error };
+    }
+
+    const payload = await alocResponse.json().catch((reason) => {
+      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error: `Failed to parse ALOC JSON: ${reason}` });
+      return null;
+    });
+
+    const candidates = extractQuestions(payload);
+    if (!candidates.length) {
+      const error = `ALOC returned no usable questions for subject ${normalizedSubject}`;
+      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error, payload });
+      return { ok: false, status: 502, error };
+    }
+
+    for (const record of candidates) {
+      if (normalizedQuestions.length >= MAX_QUESTIONS_PER_SUBJECT) {
+        break;
+      }
+
+      const normalized = normalizeQuestion(record, subjectId);
+      const questionText = normalized.question_text.trim().toLowerCase();
+      if (!questionText || seenQuestions.has(questionText)) {
+        continue;
+      }
+
+      seenQuestions.add(questionText);
+      normalizedQuestions.push(normalized);
+    }
+
+    if (!normalizedQuestions.length) {
+      const error = `ALOC returned questions but none could be normalized for ${subject}`;
+      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error, payload });
+      return { ok: false, status: 502, error };
+    }
+
+    let insertError;
+    try {
+      insertError = await serviceSupabase.from('wp_questions').insert(normalizedQuestions);
+    } catch (insertQuestionsError) {
+      const error = insertQuestionsError instanceof Error ? insertQuestionsError.message : 'Unknown insert questions error';
+      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error });
+      return { ok: false, status: 500, error };
+    }
+
+    if (insertError.error) {
+      const error = insertError.error.message;
+      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error });
+      return { ok: false, status: 500, error };
+    }
+
+    return { ok: true, inserted: normalizedQuestions.length, subject, examType, normalizedSubject, subjectId };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unexpected ingestion error';
+    console.error('[aloc-ingestion] Unexpected failure', { subject, examType, error: message });
+    return { ok: false, status: 500, error: message };
+  }
 }
