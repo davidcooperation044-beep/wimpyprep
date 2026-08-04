@@ -31,6 +31,7 @@ type WimpyAIResponse = {
 export default function PracticePage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
+  const [selectedSubjectName, setSelectedSubjectName] = useState<string>('');
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showSubjectSelection, setShowSubjectSelection] = useState(false);
   const [userSubjectIds, setUserSubjectIds] = useState<string[]>([]);
@@ -118,13 +119,16 @@ export default function PracticePage() {
       }
 
       const data = await response.json().catch(() => ({ selections: [] }));
-      const ids = (data?.selections ?? []).map((selection: { subject_id: string }) => selection.subject_id);
+      const selections = (data?.selections ?? []) as Array<{ subject_id: string; name?: string | null }>;
+      const ids = selections.map((selection) => selection.subject_id);
       setUserSubjectIds(ids);
       setIsSubjectSelectionReady(true);
-      if (!selectedSubjectId && ids.length > 0) {
+      const shouldResetSelection = !selectedSubjectId || !ids.includes(selectedSubjectId);
+      if (shouldResetSelection && ids.length > 0) {
         const nextSubject = subjects.find((subject) => subject.id === ids[0]);
         if (nextSubject) {
           setSelectedSubjectId(nextSubject.id);
+          setSelectedSubjectName(nextSubject.name);
         }
       }
     };
@@ -161,7 +165,8 @@ export default function PracticePage() {
         return;
       }
 
-      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(selectedSubjectId)}`, {
+      const subjectIdentifier = selectedSubjectId || selectedSubjectName;
+      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(subjectIdentifier)}`, {
         headers: {
           Authorization: `Bearer ${accessToken ?? ''}`,
         },
@@ -225,7 +230,8 @@ export default function PracticePage() {
     setOfflineError('');
 
     try {
-      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(selectedSubjectId)}`, {
+      const subjectIdentifier = selectedSubjectId || selectedSubjectName;
+      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(subjectIdentifier)}`, {
         headers: {
           Authorization: `Bearer ${accessToken ?? ''}`,
         },
@@ -414,7 +420,9 @@ export default function PracticePage() {
                 setShowSubjectSelection(true);
                 return;
               }
+              const nextSubject = subjects.find((subject) => subject.id === event.target.value);
               setSelectedSubjectId(event.target.value);
+              setSelectedSubjectName(nextSubject?.name ?? '');
               setSessionId(null);
               setSessionComplete(false);
               setWimpyAiResponse(null);

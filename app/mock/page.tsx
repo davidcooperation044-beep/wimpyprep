@@ -31,6 +31,7 @@ type WimpyAIResponse = {
 export default function MockPage() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
+  const [selectedSubjectName, setSelectedSubjectName] = useState<string>('');
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [index, setIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(90);
@@ -107,13 +108,16 @@ export default function MockPage() {
       }
 
       const data = await response.json().catch(() => ({ selections: [] }));
-      const ids = (data?.selections ?? []).map((selection: { subject_id: string }) => selection.subject_id);
+      const selections = (data?.selections ?? []) as Array<{ subject_id: string; name?: string | null }>;
+      const ids = selections.map((selection) => selection.subject_id);
       setUserSubjectIds(ids);
       setIsSubjectSelectionReady(true);
-      if (!selectedSubjectId && ids.length > 0) {
+      const shouldResetSelection = !selectedSubjectId || !ids.includes(selectedSubjectId);
+      if (shouldResetSelection && ids.length > 0) {
         const nextSubject = subjects.find((subject) => subject.id === ids[0]);
         if (nextSubject) {
           setSelectedSubjectId(nextSubject.id);
+          setSelectedSubjectName(nextSubject.name);
         }
       }
     };
@@ -147,7 +151,8 @@ export default function MockPage() {
       setSessionId(null);
       setTimeLeft(90);
 
-      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(selectedSubjectId)}`, {
+      const subjectIdentifier = selectedSubjectId || selectedSubjectName;
+      const response = await fetch(`/api/questions?subjectId=${encodeURIComponent(subjectIdentifier)}`, {
         headers: {
           Authorization: `Bearer ${accessToken ?? ''}`,
         },
@@ -390,7 +395,9 @@ export default function MockPage() {
                 setShowSubjectSelection(true);
                 return;
               }
+              const nextSubject = subjects.find((subject) => subject.id === event.target.value);
               setSelectedSubjectId(event.target.value);
+              setSelectedSubjectName(nextSubject?.name ?? '');
               setSessionId(null);
               setSessionComplete(false);
               setWimpyAiResponse(null);

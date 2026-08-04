@@ -57,11 +57,33 @@ export async function GET(request: Request) {
 
   const isPro = Boolean(subscriptionData);
 
+  const { data: subjectRow, error: subjectError } = await supabase
+    .from('wp_subjects')
+    .select('id,name')
+    .eq('id', subjectId)
+    .maybeSingle();
+
   let query = supabase
     .from('wp_questions')
     .select('id,topic,question_text,options,year')
     .eq('subject_id', subjectId)
     .limit(40);
+
+  if (!subjectRow && !subjectError) {
+    const { data: subjectByName, error: subjectByNameError } = await supabase
+      .from('wp_subjects')
+      .select('id,name')
+      .eq('name', subjectId)
+      .maybeSingle();
+
+    if (!subjectByNameError && subjectByName?.id) {
+      query = supabase
+        .from('wp_questions')
+        .select('id,topic,question_text,options,year')
+        .eq('subject_id', subjectByName.id)
+        .limit(40);
+    }
+  }
 
   if (year !== null && Number.isFinite(year)) {
     query = query.eq('year', year);
@@ -84,6 +106,18 @@ export async function GET(request: Request) {
 
     return isPro;
   });
+
+  if (!questions.length) {
+    return NextResponse.json({
+      questions,
+      isPro,
+      premiumYearSelected: Boolean(year && isPremiumYear(year)),
+      debug: {
+        subjectId,
+        subjectRow: subjectRow ?? null,
+      },
+    });
+  }
 
   return NextResponse.json({ questions, isPro, premiumYearSelected: Boolean(year && isPremiumYear(year)) });
 }

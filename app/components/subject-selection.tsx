@@ -5,20 +5,22 @@ import { createPublicSupabaseClient } from '../../lib/supabase';
 import { useSession } from '../../lib/session-bootstrap';
 
 type SubjectOption = { id: string; name: string; exam_type: string };
+type ExamType = 'jamb' | 'waec';
 type SubjectSelectionProps = {
   onComplete?: () => void;
-  initialExamType?: 'jamb' | 'waec' | 'both';
+  initialExamType?: ExamType;
 };
 
-const JAMB_REQUIRED_SUBJECTS = ['English'];
+type SelectionBuckets = Record<ExamType, string[]>;
+
 const JAMB_ELECTIVE_OPTIONS = ['Mathematics', 'Physics', 'Chemistry', 'Biology', 'Economics', 'Government', 'Literature', 'History', 'Geography', 'Commerce', 'Agricultural Science'];
 const WAEC_SUBJECT_OPTIONS = ['English', 'Mathematics', 'Physics', 'Chemistry', 'Biology', 'Economics', 'Government', 'Literature', 'History', 'Geography', 'Commerce', 'Agricultural Science', 'French', 'Computer Studies', 'Civic Education'];
 
-export function SubjectSelection({ onComplete, initialExamType = 'both' }: SubjectSelectionProps) {
+export function SubjectSelection({ onComplete, initialExamType = 'jamb' }: SubjectSelectionProps) {
   const { user, accessToken } = useSession();
   const [subjects, setSubjects] = useState<SubjectOption[]>([]);
-  const [examType, setExamType] = useState<'jamb' | 'waec' | 'both'>(initialExamType);
-  const [selected, setSelected] = useState<string[]>([]);
+  const [examType, setExamType] = useState<ExamType>(initialExamType);
+  const [selectedByExamType, setSelectedByExamType] = useState<SelectionBuckets>({ jamb: [], waec: [] });
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -60,28 +62,30 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
       const data = await response.json().catch(() => ({ selections: [] }));
       const selections = Array.isArray(data?.selections) ? data.selections : [];
       if (!selections.length) {
-        setSelected(examType === 'jamb' ? ['English'] : []);
+        const englishSubject = subjects.find((subject) => subject.name === 'English' && subject.exam_type === 'jamb');
+        setSelectedByExamType({ jamb: englishSubject ? [englishSubject.id] : [], waec: [] });
         return;
       }
 
-      const nextSelection = Array.from(
-        new Set(
-          selections
-            .map((selection: { subject_id: string; exam_type: string }) => {
-              const subject = subjects.find((item) => item.id === selection.subject_id);
-              return subject?.name ?? null;
-            })
-            .filter(Boolean) as string[]
-        )
-      );
+      const nextSelection: SelectionBuckets = { jamb: [], waec: [] };
+      for (const selection of selections as Array<{ subject_id: string; exam_type: string }>) {
+        const subject = subjects.find((item) => item.id === selection.subject_id);
+        if (!subject) {
+          continue;
+        }
 
-      if (nextSelection.length) {
-        setSelected(nextSelection);
+        if (selection.exam_type === 'jamb') {
+          nextSelection.jamb.push(subject.id);
+        } else if (selection.exam_type === 'waec') {
+          nextSelection.waec.push(subject.id);
+        }
       }
+
+      setSelectedByExamType(nextSelection);
 
       const examKinds = Array.from(new Set(selections.map((selection: { exam_type: string }) => selection.exam_type)));
       if (examKinds.includes('jamb') && examKinds.includes('waec')) {
-        setExamType('both');
+        setExamType('jamb');
       } else if (examKinds.includes('jamb')) {
         setExamType('jamb');
       } else if (examKinds.includes('waec')) {
@@ -90,93 +94,80 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
     };
 
     void loadSelection();
-  }, [accessToken, examType, subjects, user]);
+  }, [accessToken, subjects, user]);
 
-  const distinctSubjects = useMemo(() => {
-    const map = new Map<string, SubjectOption>();
-    for (const subject of subjects) {
-      if (!map.has(subject.name)) {
-        map.set(subject.name, subject);
-      }
-    }
-    return Array.from(map.values());
-  }, [subjects]);
+  const selectedSubjectIds = useMemo(() => selectedByExamType[examType], [examType, selectedByExamType]);
 
   const availableOptions = useMemo(() => {
-    const base = distinctSubjects.filter((subject) => {
+    const base = subjects.filter((subject) => {
       if (examType === 'jamb') {
         return subject.name === 'English' || JAMB_ELECTIVE_OPTIONS.includes(subject.name);
       }
-      if (examType === 'waec') {
-        return WAEC_SUBJECT_OPTIONS.includes(subject.name);
-      }
-      return true;
+      return WAEC_SUBJECT_OPTIONS.includes(subject.name);
     });
 
-    const selectedNames = new Set(selected);
-    return base.filter((subject) => !selectedNames.has(subject.name));
-  }, [examType, selected, distinctSubjects]);
+    const selectedIds = new Set(selectedSubjectIds);
+    return base.filter((subject) => !selectedIds.has(subject.id));
+  }, [examType, selectedSubjectIds, subjects]);
 
-  const selectedSubjectNames = useMemo(() => Array.from(new Set(selected)), [selected]);
+  const selectedSubjectNames = useMemo(() => {
+    const selectedIds = new Set(selectedSubjectIds);
+    return subjects
+      .filter((subject) => selectedIds.has(subject.id))
+      .map((subject) => subject.name);
+  }, [selectedSubjectIds, subjects]);
 
   const selectedSubjectPayload = useMemo(() => {
-    const selectedNames = new Set(selectedSubjectNames);
     const payload: Array<{ subject_id: string; exam_type: 'jamb' | 'waec' }> = [];
     const seen = new Set<string>();
 
-    for (const subject of subjects) {
-      if (!selectedNames.has(subject.name)) {
-        continue;
-      }
+    for (const [examKey, subjectIds] of Object.entries(selectedByExamType) as Array<[ExamType, string[]]>) {
+      for (const subjectId of subjectIds) {
+        const payloadKey = `${subjectId}:${examKey}`;
+        if (seen.has(payloadKey)) {
+          continue;
+        }
 
-      if (examType === 'jamb' && subject.exam_type !== 'jamb') {
-        continue;
+        seen.add(payloadKey);
+        payload.push({ subject_id: subjectId, exam_type: examKey });
       }
-
-      if (examType === 'waec' && subject.exam_type !== 'waec') {
-        continue;
-      }
-
-      const payloadKey = `${subject.id}:${subject.exam_type}`;
-      if (seen.has(payloadKey)) {
-        continue;
-      }
-
-      seen.add(payloadKey);
-      payload.push({ subject_id: subject.id, exam_type: subject.exam_type as 'jamb' | 'waec' });
     }
 
     return payload;
-  }, [examType, selectedSubjectNames, subjects]);
+  }, [selectedByExamType]);
 
   const canSubmit = useMemo(() => {
     if (examType === 'jamb') {
-      return selected.length === 4 && selected.includes('English');
+      return selectedSubjectIds.length === 4 && selectedSubjectIds.some((id) => subjects.find((subject) => subject.id === id)?.name === 'English');
     }
 
-    if (examType === 'waec') {
-      return selected.length >= 7 && selected.length <= 9;
-    }
+    return selectedSubjectIds.length >= 7 && selectedSubjectIds.length <= 9;
+  }, [examType, selectedSubjectIds, subjects]);
 
-    return selected.length >= 7 && selected.length <= 9;
-  }, [examType, selected]);
+  const toggleSubject = (subject: SubjectOption) => {
+    setSelectedByExamType((current) => {
+      const bucket = examType;
+      const currentSelection = current[bucket];
 
-  const toggleSubject = (subjectName: string) => {
-    setSelected((current) => {
-      if (current.includes(subjectName)) {
-        if (examType === 'jamb' && subjectName === 'English') {
+      if (currentSelection.includes(subject.id)) {
+        if (bucket === 'jamb' && subject.name === 'English') {
           return current;
         }
-        return current.filter((value) => value !== subjectName);
+
+        return {
+          ...current,
+          [bucket]: currentSelection.filter((value) => value !== subject.id),
+        };
       }
 
-      if (examType === 'jamb') {
-        if (current.length >= 4) {
-          return current;
-        }
+      if (bucket === 'jamb' && currentSelection.length >= 4) {
+        return current;
       }
 
-      return [...current, subjectName];
+      return {
+        ...current,
+        [bucket]: [...currentSelection, subject.id],
+      };
     });
   };
 
@@ -228,13 +219,11 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
         <label className="subject-picker-label">
           <span>Exam focus</span>
           <select value={examType} onChange={(event) => {
-            const next = event.target.value as 'jamb' | 'waec' | 'both';
+            const next = event.target.value as ExamType;
             setExamType(next);
-            setSelected(next === 'jamb' ? ['English'] : []);
           }} className="option">
-            <option value="both">JAMB + WAEC</option>
-            <option value="jamb">JAMB only</option>
-            <option value="waec">WAEC only</option>
+            <option value="jamb">JAMB</option>
+            <option value="waec">WAEC</option>
           </select>
         </label>
       </div>
@@ -245,8 +234,9 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
         <div className="subject-chip-grid">
           {availableOptions.map((subject) => {
             const isLocked = examType === 'jamb' && subject.name === 'English';
+            const isSelected = selectedSubjectIds.includes(subject.id);
             return (
-              <button key={subject.id} type="button" className={`chip ${selected.includes(subject.name) ? 'selected' : ''}`} onClick={() => toggleSubject(subject.name)} disabled={isLocked}>
+              <button key={subject.id} type="button" className={`chip ${isSelected ? 'selected' : ''}`} onClick={() => toggleSubject(subject)} disabled={isLocked}>
                 {subject.name}
               </button>
             );
