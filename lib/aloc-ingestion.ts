@@ -25,6 +25,8 @@ type ALOCQuestion = {
 const ALOC_API_URL = 'https://questions.aloc.com.ng/api/v2/m/100';
 const MAX_QUESTIONS_PER_SUBJECT = 100;
 const VALID_ALOC_TYPES = new Set(['utme', 'wassce', 'post-utme']);
+const FETCH_TIMEOUT_MS = Number.parseInt(process.env.ALOC_FETCH_TIMEOUT_MS ?? '', 10);
+const EFFECTIVE_FETCH_TIMEOUT_MS = Number.isFinite(FETCH_TIMEOUT_MS) && FETCH_TIMEOUT_MS > 0 ? FETCH_TIMEOUT_MS : 300000;
 
 function normalizeSubjectName(value: string) {
   const normalized = value.trim().toLowerCase();
@@ -255,7 +257,7 @@ export async function ingestQuestionsForSubject(subject: string, examType: strin
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), EFFECTIVE_FETCH_TIMEOUT_MS);
 
     let alocResponse: Response;
     try {
@@ -276,8 +278,9 @@ export async function ingestQuestionsForSubject(subject: string, examType: strin
     }
 
     if (!alocResponse.ok) {
+      const responseText = await alocResponse.text().catch(() => '');
       const error = `ALOC request failed with ${alocResponse.status} ${alocResponse.statusText}`;
-      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, normalizedExamType, error, status: alocResponse.status, statusText: alocResponse.statusText });
+      console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, normalizedExamType, error, status: alocResponse.status, statusText: alocResponse.statusText, responseText });
       return { ok: false, status: 502, error };
     }
 

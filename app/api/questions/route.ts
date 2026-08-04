@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createPublicSupabaseClient, createServiceSupabaseClient } from '../../../lib/supabase';
+
+export const dynamic = 'force-dynamic';
 import { isPremiumYear, PREMIUM_YEAR_START } from '../../../lib/premium';
 import { ingestQuestionsForSubject } from '../../../lib/aloc-ingestion';
 
@@ -106,20 +108,22 @@ export async function GET(request: Request) {
     }
 
     try {
-      const subjectResponse = await supabase
-        .from('wp_subjects')
-        .select('id,name,exam_type')
-        .eq('id', subjectId)
-        .maybeSingle();
+      if (isLikelyUuid(subjectId)) {
+        const subjectResponse = await supabase
+          .from('wp_subjects')
+          .select('id,name,exam_type')
+          .eq('id', subjectId)
+          .maybeSingle();
 
-      subjectRow = (subjectResponse.data as SubjectLookupRow | null) ?? null;
-      subjectError = subjectResponse.error as typeof subjectError;
+        subjectRow = (subjectResponse.data as SubjectLookupRow | null) ?? null;
+        subjectError = subjectResponse.error as typeof subjectError;
+      }
 
       if (subjectRow?.id) {
         resolvedSubjectId = subjectRow.id;
         resolvedSubjectName = subjectRow.name ?? subjectId;
         resolvedExamType = subjectRow.exam_type ?? null;
-      } else if (!subjectError) {
+      } else {
         const subjectByNameResponse = await supabase
           .from('wp_subjects')
           .select('id,name,exam_type')
@@ -133,6 +137,8 @@ export async function GET(request: Request) {
           resolvedSubjectId = subjectByName.id;
           resolvedSubjectName = subjectByName.name ?? subjectId;
           resolvedExamType = subjectByName.exam_type ?? null;
+        } else if (subjectByNameError) {
+          subjectError = subjectByNameError;
         }
       }
     } catch (subjectLookupError) {
