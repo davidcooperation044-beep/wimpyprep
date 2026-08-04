@@ -22,6 +22,9 @@ export default function HomePage() {
     if (typeof window !== 'undefined') {
       setSignupUrl(`https://id.wimpy-corp.com.ng/signup?redirect=${encodeURIComponent(window.location.href)}`);
     }
+  }, []);
+
+  useEffect(() => {
     if (!isAuthenticated || !user) {
       return;
     }
@@ -39,18 +42,6 @@ export default function HomePage() {
         setReferralUrl(buildReferralLink(user.id));
         setProgressValue(Math.round(loaded.accuracy * 100));
       }
-
-      const response = await fetch('/api/referral', {
-        headers: {
-          Authorization: `Bearer ${accessToken ?? ''}`,
-        },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (active) {
-          setReferralCount(data.referralCount ?? 0);
-        }
-      }
     };
 
     void loadMetrics();
@@ -58,6 +49,34 @@ export default function HomePage() {
       active = false;
     };
   }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user || !accessToken) {
+      return;
+    }
+
+    let active = true;
+    const loadReferral = async () => {
+      const response = await fetch('/api/referral', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json();
+      if (active) {
+        setReferralCount(data.referralCount ?? 0);
+      }
+    };
+
+    void loadReferral();
+    return () => {
+      active = false;
+    };
+  }, [accessToken, isAuthenticated, user]);
 
   useEffect(() => {
     if (!isAuthenticated || !user || !accessToken) {

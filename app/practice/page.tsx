@@ -96,10 +96,18 @@ export default function PracticePage() {
       setIsSubscriptionLoading(false);
     };
 
+    void loadSubscription();
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user || !accessToken) {
+      return;
+    }
+
     const loadUserSubjects = async () => {
       const response = await fetch('/api/user-subjects', {
         headers: {
-          Authorization: `Bearer ${accessToken ?? ''}`,
+          Authorization: `Bearer ${accessToken}`,
         },
       });
 
@@ -121,12 +129,11 @@ export default function PracticePage() {
       }
     };
 
-    void loadSubscription();
     void loadUserSubjects();
-  }, [accessToken, isAuthenticated, selectedSubjectId, subjectIdsList, userId]);
+  }, [accessToken, isAuthenticated, selectedSubjectId, subjects, user]);
 
   useEffect(() => {
-    if (!selectedSubjectId || !isAuthenticated || !user || isSubscriptionLoading) {
+    if (!selectedSubjectId || !isAuthenticated || !user || !accessToken || isSubscriptionLoading) {
       return;
     }
 

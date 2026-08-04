@@ -117,9 +117,37 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
     return base.filter((subject) => !selectedNames.has(subject.name));
   }, [examType, selected, distinctSubjects]);
 
-  const selectedSubjectNames = useMemo(() => {
-    return Array.from(new Set(distinctSubjects.filter((subject) => selected.includes(subject.name)).map((subject) => subject.name)));
-  }, [selected, distinctSubjects]);
+  const selectedSubjectNames = useMemo(() => Array.from(new Set(selected)), [selected]);
+
+  const selectedSubjectPayload = useMemo(() => {
+    const selectedNames = new Set(selectedSubjectNames);
+    const payload: Array<{ subject_id: string; exam_type: 'jamb' | 'waec' }> = [];
+    const seen = new Set<string>();
+
+    for (const subject of subjects) {
+      if (!selectedNames.has(subject.name)) {
+        continue;
+      }
+
+      if (examType === 'jamb' && subject.exam_type !== 'jamb') {
+        continue;
+      }
+
+      if (examType === 'waec' && subject.exam_type !== 'waec') {
+        continue;
+      }
+
+      const payloadKey = `${subject.id}:${subject.exam_type}`;
+      if (seen.has(payloadKey)) {
+        continue;
+      }
+
+      seen.add(payloadKey);
+      payload.push({ subject_id: subject.id, exam_type: subject.exam_type as 'jamb' | 'waec' });
+    }
+
+    return payload;
+  }, [examType, selectedSubjectNames, subjects]);
 
   const canSubmit = useMemo(() => {
     if (examType === 'jamb') {
@@ -161,34 +189,7 @@ export function SubjectSelection({ onComplete, initialExamType = 'both' }: Subje
     setError(null);
 
     try {
-      const selectedIds = Array.from(
-        new Set(
-          distinctSubjects
-            .filter((subject) => selected.includes(subject.name))
-            .map((subject) => subject.id)
-        )
-      );
-
-      const payload = selectedIds.flatMap((subjectId) => {
-        const subject = subjects.find((item) => item.id === subjectId);
-        if (!subject) {
-          return [];
-        }
-
-        if (examType === 'jamb') {
-          return [{ subject_id: subjectId, exam_type: 'jamb' }];
-        }
-
-        if (examType === 'waec') {
-          return [{ subject_id: subjectId, exam_type: 'waec' }];
-        }
-
-        return [
-          { subject_id: subjectId, exam_type: 'jamb' },
-          { subject_id: subjectId, exam_type: 'waec' },
-        ];
-      });
-
+      const payload = selectedSubjectPayload;
       const response = await fetch('/api/user-subjects', {
         method: 'POST',
         headers: {
