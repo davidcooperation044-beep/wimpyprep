@@ -16,18 +16,22 @@ const supabase = createClient(supabaseUrl, serviceRoleKey, {
   },
 });
 
-const subjects = ['English', 'Mathematics', 'Physics', 'Biology'];
-const examTypes = ['jamb', 'waec'];
-
 async function main() {
-  for (const subject of subjects) {
-    for (const examType of examTypes) {
-      const response = await fetch(`${baseUrl}/api/aloc?subject=${encodeURIComponent(subject)}&exam_type=${encodeURIComponent(examType)}`);
-      const payload = await response.json().catch(() => ({}));
-      console.log(`[seed] ${subject} / ${examType}: ${response.status} ${payload.inserted ?? 0} inserted`);
-      if (!response.ok) {
-        console.error(payload.error || 'Unknown error');
-      }
+  const { data: subjectRows, error: subjectsError } = await supabase
+    .from('wp_subjects')
+    .select('name, exam_type');
+
+  if (subjectsError) {
+    console.error(subjectsError.message);
+    process.exit(1);
+  }
+
+  for (const { name, exam_type } of subjectRows ?? []) {
+    const response = await fetch(`${baseUrl}/api/aloc?subject=${encodeURIComponent(name)}&exam_type=${encodeURIComponent(exam_type)}`);
+    const payload = await response.json().catch(() => ({}));
+    console.log(`[seed] ${name} / ${exam_type}: ${response.status} ${payload.inserted ?? 0} inserted`);
+    if (!response.ok) {
+      console.error(payload.error || 'Unknown error');
     }
   }
 
