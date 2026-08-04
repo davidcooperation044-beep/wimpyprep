@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSession } from '../../lib/session-bootstrap';
+import { useWalletFundingReturn } from '../hooks/use-wallet-funding-return';
 
 export type UpgradePlan = {
   product_name?: string;
@@ -23,7 +24,23 @@ export function UpgradeModal({ open, onClose, onSuccess }: UpgradeModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [fundingAmount, setFundingAmount] = useState('');
+  const [fundingRequired, setFundingRequired] = useState(false);
+  const [requiredAmount, setRequiredAmount] = useState<number | null>(null);
+  const [currentBalance, setCurrentBalance] = useState<number | null>(null);
+  const [isFunding, setIsFunding] = useState(false);
   const { accessToken } = useSession();
+
+  const { isConfirming, fundingError, fundingSucceeded } = useWalletFundingReturn({
+    enabled: open,
+    accessToken,
+    expectedMinimumBalance: Number(requiredAmount ?? currentBalance ?? 0),
+    onResolved: () => {
+      setError(null);
+      setIsSuccess(false);
+      setFundingRequired(false);
+    },
+  });
 
   useEffect(() => {
     if (!open) {
@@ -86,8 +103,13 @@ export function UpgradeModal({ open, onClose, onSuccess }: UpgradeModalProps) {
       const data = await response.json().catch(() => null);
       if (!response.ok) {
         if (data?.error === 'insufficient-funds') {
+          setFundingRequired(true);
+          setRequiredAmount(Number(data?.requiredAmount ?? 0));
+          setCurrentBalance(Number(data?.currentBalance ?? 0));
+          setFundingAmount(String(Math.max(Number(data?.requiredAmount ?? 0) - Number(data?.currentBalance ?? 0), 1)));
           setError('Your wallet balance is too low. Fund your wallet and try again.');
         } else {
+          setFundingRequired(false);
           setError(data?.error ?? 'Unable to complete your upgrade right now.');
         }
         return;
@@ -97,6 +119,43 @@ export function UpgradeModal({ open, onClose, onSuccess }: UpgradeModalProps) {
       onSuccess?.();
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleFundWallet = async () => {
+    if (!accessToken) {
+      setError('Please sign in again to fund your wallet.');
+      return;
+    }
+
+    setIsFunding(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/wimpypay/fund', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          amount: Number(fundingAmount || 0),
+          return_url: `${window.location.origin}${window.location.pathname}${window.location.search || ''}`,
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        setError(data?.error ?? 'Unable to start wallet funding right now.');
+        return;
+      }
+
+      if (data?.authorizationUrl) {
+        window.location.href = data.authorizationUrl;
+      } else {
+        setError('The funding request did not return a payment link.');
+      }
+    } finally {
+      setIsFunding(false);
     }
   };
 
@@ -121,6 +180,9 @@ export function UpgradeModal({ open, onClose, onSuccess }: UpgradeModalProps) {
 
         {isLoading ? <p className="meta">Loading pricing…</p> : null}
         {error ? <p className="meta danger">{error}</p> : null}
+        {isConfirming ? <p className="meta success">Confirming your payment…</p> : null}
+        {fundingSucceeded ? <p className="meta success">Wallet funded successfully. You can continue with your upgrade.</p> : null}
+        {fundingError ? <p className="meta danger">{fundingError}</p> : null}
         {isSuccess ? <p className="meta success">Upgrade completed successfully.</p> : null}
 
         {!isLoading && !error ? (
@@ -136,6 +198,27 @@ export function UpgradeModal({ open, onClose, onSuccess }: UpgradeModalProps) {
             <div className="upgrade-price-row">
               <span className="eyebrow">Billing</span>
               <strong>{plan?.billing_interval ?? 'monthly'}</strong>
+            </div>
+          </div>
+        ) : null}
+
+        {fundingRequired ? (
+          <div className="panel" style={{ marginTop: 12 }}>
+            <p className="meta">Required: {requiredAmount ?? 0} · Current balance: {currentBalance ?? 0}</p>
+            <label className="subject-picker-label">
+              <span>Amount to fund</span>
+              <input
+                className="option"
+                type="number"
+                min="1"
+                value={fundingAmount}
+                onChange={(event) => setFundingAmount(event.target.value)}
+              />
+            </label>
+            <div className="modal-actions">
+              <button className="button primary" onClick={() => void handleFundWallet()} disabled={isFunding || !fundingAmount} type="button">
+                {isFunding ? 'Redirecting…' : 'Fund wallet'}
+              </button>
             </div>
           </div>
         ) : null}
