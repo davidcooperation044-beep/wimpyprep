@@ -11,5 +11,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
-  return NextResponse.json({ inserted: result.inserted, subject, examType, skipped: Boolean(result.skipped) });
+  return NextResponse.json({ inserted: result.inserted, subject, examType, skipped: false });
 }

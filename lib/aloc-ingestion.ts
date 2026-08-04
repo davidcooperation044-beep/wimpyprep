@@ -1,22 +1,70 @@
 import { createServiceSupabaseClient } from './supabase';
 
 type ALOCQuestion = {
+  id?: string | number;
   subject?: string;
   topic?: string;
-  year?: number;
+  year?: number | string;
   question?: string;
-  options?: Array<{ label?: string; text?: string }> | Record<string, string>;
+  question_text?: string;
+  option?: Record<string, string>;
+  options?: Array<{ label?: string; text?: string }> | Record<string, string> | Record<string, unknown>;
+  option_a?: string;
+  option_b?: string;
+  option_c?: string;
+  option_d?: string;
   answer?: string;
   correct_option?: string;
+  correct_answer?: string;
   explanation?: string;
+  solution?: string;
+  examtype?: string;
+  examyear?: string;
 };
 
-const ALOC_API_URL = 'https://questions.aloc.com.ng/api/questions';
-const MAX_PAGES = 10;
-const PAGE_SIZE = 100;
-const MAX_QUESTIONS_PER_SUBJECT = 500;
+const ALOC_API_URL = 'https://questions.aloc.com.ng/api/v2/m/100';
+const MAX_QUESTIONS_PER_SUBJECT = 100;
+const VALID_ALOC_TYPES = new Set(['utme', 'wassce', 'post-utme']);
 
-function normalizeOptions(payload: ALOCQuestion['options']) {
+function normalizeSubjectName(value: string) {
+  const normalized = value.trim().toLowerCase();
+  const aliasMap: Record<string, string> = {
+    'english language': 'english',
+    'english': 'english',
+    'mathematics': 'mathematics',
+    'commerce': 'commerce',
+    'accounting': 'accounting',
+    'biology': 'biology',
+    'physics': 'physics',
+    'chemistry': 'chemistry',
+    'english literature': 'englishlit',
+    'englishlit': 'englishlit',
+    'government': 'government',
+    'crk': 'crk',
+    'geography': 'geography',
+    'economics': 'economics',
+    'irk': 'irk',
+    'civiledu': 'civiledu',
+    'civic education': 'civiledu',
+    'insurance': 'insurance',
+    'current affairs': 'currentaffairs',
+    'currentaffairs': 'currentaffairs',
+    'history': 'history',
+  };
+
+  return aliasMap[normalized] ?? normalized;
+}
+
+function normalizeExamType(examType: string) {
+  const normalized = examType.trim().toLowerCase();
+  if (normalized === 'jamb') {
+    return 'utme';
+  }
+
+  return VALID_ALOC_TYPES.has(normalized) ? normalized : null;
+}
+
+function normalizeOptions(payload: ALOCQuestion['options'] | ALOCQuestion['option']) {
   if (Array.isArray(payload)) {
     return payload.map((option) => ({
       label: option.label ?? '',
@@ -25,25 +73,30 @@ function normalizeOptions(payload: ALOCQuestion['options']) {
   }
 
   if (payload && typeof payload === 'object') {
-    return Object.entries(payload).map(([label, text]) => ({ label, text }));
+    const record = payload as Record<string, unknown>;
+    const directEntries = Object.entries(record).filter(([key]) => !['id', 'subject', 'topic', 'year', 'question', 'question_text', 'answer', 'correct_option', 'correct_answer', 'explanation', 'solution', 'examtype', 'examyear'].includes(key));
+    if (directEntries.length) {
+      return directEntries.map(([label, text]) => ({ label: String(label).toUpperCase(), text: String(text ?? '') }));
+    }
   }
 
   return [];
 }
 
 function normalizeQuestion(record: ALOCQuestion, subjectId: string) {
-  const normalizedOptions = normalizeOptions(record.options);
-  const answerLabel = record.correct_option || record.answer || '';
-  const correctOption = normalizedOptions.find((option) => option.label === answerLabel)?.label || answerLabel;
+  const normalizedOptions = normalizeOptions(record.option ?? record.options);
+  const answerCandidates = [record.correct_option, record.correct_answer, record.answer].filter((value): value is string => Boolean(value));
+  const answerLabel = answerCandidates[0]?.trim().toUpperCase() ?? '';
+  const correctOption = normalizedOptions.find((option) => option.label.toUpperCase() === answerLabel)?.label || answerLabel;
 
   return {
     subject_id: subjectId,
     topic: record.topic || 'General',
-    year: record.year || 2020,
-    question_text: record.question || '',
+    year: Number(record.examyear ?? record.year) || 2020,
+    question_text: record.question || record.question_text || '',
     options: normalizedOptions,
     correct_option: correctOption,
-    explanation: record.explanation || null,
+    explanation: record.solution || record.explanation || null,
     difficulty: 2,
   };
 }
@@ -55,42 +108,28 @@ function extractQuestions(payload: unknown): ALOCQuestion[] {
 
   if (payload && typeof payload === 'object') {
     const record = payload as Record<string, unknown>;
-    for (const key of ['data', 'results', 'questions', 'items']) {
+    const directData = record.data;
+    if (Array.isArray(directData)) {
+      return directData as ALOCQuestion[];
+    }
+
+    for (const key of ['results', 'questions', 'items', 'items_data']) {
       const candidate = record[key];
       if (Array.isArray(candidate)) {
         return candidate as ALOCQuestion[];
       }
+    }
+
+    if (record.question && typeof record.question === 'object') {
+      return [record.question as ALOCQuestion];
     }
   }
 
   return [];
 }
 
-function extractNextPage(payload: unknown, currentPage: number): number | null {
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-
-  const record = payload as Record<string, unknown>;
-  const pagination = record.pagination;
-  if (pagination && typeof pagination === 'object') {
-    const nextPage = (pagination as Record<string, unknown>).next_page;
-    if (typeof nextPage === 'number') {
-      return nextPage;
-    }
-  }
-
-  const nextPageField = record.next_page;
-  if (typeof nextPageField === 'number') {
-    return nextPageField;
-  }
-
-  const totalPages = record.total_pages;
-  if (typeof totalPages === 'number') {
-    return totalPages > currentPage ? currentPage + 1 : null;
-  }
-
-  return null;
+function isValidToken(token: string | undefined) {
+  return Boolean(token && /^ALOC-[A-Za-z0-9]{8,}$/.test(token));
 }
 
 export async function ingestQuestionsForSubject(subject: string, examType: string) {
@@ -98,15 +137,44 @@ export async function ingestQuestionsForSubject(subject: string, examType: strin
   const serviceSupabase = createServiceSupabaseClient();
 
   if (!token || !serviceSupabase) {
-    return { ok: false, status: 500, error: 'ALOC access token or Supabase service role is not configured.' };
+    const error = 'ALOC access token or Supabase service role is not configured.';
+    console.error('[aloc-ingestion]', { subject, examType, error });
+    return { ok: false, status: 500, error };
   }
 
+  if (!isValidToken(token)) {
+    const error = `ALOC access token is invalid. Expected a token that starts with ALOC- and contains a 40-character-ish hex-like value.`;
+    console.error('[aloc-ingestion]', { subject, examType, error, token: token.slice(0, 12) });
+    return { ok: false, status: 500, error };
+  }
+
+  const normalizedSubject = normalizeSubjectName(subject);
+  if (!normalizedSubject) {
+    const error = `No valid ALOC subject slug could be derived from ${subject}.`;
+    console.error('[aloc-ingestion]', { subject, examType, error });
+    return { ok: false, status: 400, error };
+  }
+
+  const normalizedExamType = normalizeExamType(examType);
   let subjectResponse = await serviceSupabase.from('wp_subjects').select('id,name').eq('name', subject).maybeSingle();
-  if (subjectResponse.error) {
-    return { ok: false, status: 500, error: subjectResponse.error.message };
+  if (subjectResponse.error && subjectResponse.error.code !== 'PGRST116') {
+    const error = subjectResponse.error.message;
+    console.error('[aloc-ingestion]', { subject, examType, error });
+    return { ok: false, status: 500, error };
   }
 
   let subjectId = subjectResponse.data?.id;
+  if (!subjectId) {
+    const normalizedSubject = normalizeSubjectName(subject);
+    const subjectSearchResponse = await serviceSupabase
+      .from('wp_subjects')
+      .select('id,name')
+      .ilike('name', `%${subject}%`)
+      .limit(5);
+    if (!subjectSearchResponse.error && subjectSearchResponse.data?.length) {
+      subjectId = subjectSearchResponse.data[0]?.id;
+    }
+  }
   if (!subjectId) {
     const insertResponse = await serviceSupabase
       .from('wp_subjects')
@@ -114,7 +182,9 @@ export async function ingestQuestionsForSubject(subject: string, examType: strin
       .select('id,name')
       .single();
     if (insertResponse.error) {
-      return { ok: false, status: 500, error: `Could not create subject ${subject}: ${insertResponse.error.message}` };
+      const error = `Could not create subject ${subject}: ${insertResponse.error.message}`;
+      console.error('[aloc-ingestion]', { subject, examType, error });
+      return { ok: false, status: 500, error };
     }
     subjectId = insertResponse.data.id;
   }
@@ -122,7 +192,9 @@ export async function ingestQuestionsForSubject(subject: string, examType: strin
   const seenQuestions = new Set<string>();
   const existingQuestionsResponse = await serviceSupabase.from('wp_questions').select('question_text').eq('subject_id', subjectId);
   if (existingQuestionsResponse.error) {
-    return { ok: false, status: 500, error: existingQuestionsResponse.error.message };
+    const error = existingQuestionsResponse.error.message;
+    console.error('[aloc-ingestion]', { subject, examType, error });
+    return { ok: false, status: 500, error };
   }
 
   for (const row of existingQuestionsResponse.data ?? []) {
@@ -142,70 +214,66 @@ export async function ingestQuestionsForSubject(subject: string, examType: strin
     explanation: string | null;
     difficulty: number;
   }> = [];
-  let currentPage = 1;
-  let hasMorePages = true;
 
-  while (hasMorePages && currentPage <= MAX_PAGES) {
-    const url = new URL(ALOC_API_URL);
-    url.searchParams.set('subject', subject);
-    url.searchParams.set('exam_type', examType);
-    url.searchParams.set('page', String(currentPage));
-    url.searchParams.set('per_page', String(PAGE_SIZE));
+  const url = new URL(ALOC_API_URL);
+  url.searchParams.set('subject', normalizedSubject);
+  if (normalizedExamType) {
+    url.searchParams.set('type', normalizedExamType);
+  }
 
-    const alocResponse = await fetch(url.toString(), {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-      },
-    });
+  const alocResponse = await fetch(url.toString(), {
+    headers: {
+      AccessToken: token,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+  });
 
-    if (!alocResponse.ok) {
-      return { ok: false, status: 502, error: `ALOC request failed: ${alocResponse.statusText}` };
-    }
+  if (!alocResponse.ok) {
+    const error = `ALOC request failed with ${alocResponse.status} ${alocResponse.statusText}`;
+    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, normalizedExamType, error, status: alocResponse.status, statusText: alocResponse.statusText });
+    return { ok: false, status: 502, error };
+  }
 
-    const payload = await alocResponse.json();
-    const candidates = extractQuestions(payload);
-    if (!candidates.length) {
-      break;
-    }
+  const payload = await alocResponse.json().catch((reason) => {
+    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error: `Failed to parse ALOC JSON: ${reason}` });
+    return null;
+  });
 
-    for (const record of candidates) {
-      if (normalizedQuestions.length >= MAX_QUESTIONS_PER_SUBJECT) {
-        hasMorePages = false;
-        break;
-      }
+  const candidates = extractQuestions(payload);
+  if (!candidates.length) {
+    const error = `ALOC returned no usable questions for subject ${normalizedSubject}`;
+    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error, payload });
+    return { ok: false, status: 502, error };
+  }
 
-      const normalized = normalizeQuestion(record, subjectId);
-      const questionText = normalized.question_text.trim().toLowerCase();
-      if (!questionText || seenQuestions.has(questionText)) {
-        continue;
-      }
-
-      seenQuestions.add(questionText);
-      normalizedQuestions.push(normalized);
-    }
-
+  for (const record of candidates) {
     if (normalizedQuestions.length >= MAX_QUESTIONS_PER_SUBJECT) {
       break;
     }
 
-    const nextPage = extractNextPage(payload, currentPage);
-    if (!nextPage || nextPage <= currentPage) {
-      hasMorePages = false;
-      break;
+    const normalized = normalizeQuestion(record, subjectId);
+    const questionText = normalized.question_text.trim().toLowerCase();
+    if (!questionText || seenQuestions.has(questionText)) {
+      continue;
     }
 
-    currentPage = nextPage;
+    seenQuestions.add(questionText);
+    normalizedQuestions.push(normalized);
   }
 
   if (!normalizedQuestions.length) {
-    return { ok: true, inserted: 0, subject, examType, skipped: true };
+    const error = `ALOC returned questions but none could be normalized for ${subject}`;
+    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error, payload });
+    return { ok: false, status: 502, error };
   }
 
   const { error: insertError } = await serviceSupabase.from('wp_questions').insert(normalizedQuestions);
   if (insertError) {
-    return { ok: false, status: 500, error: insertError.message };
+    const error = insertError.message;
+    console.error('[aloc-ingestion]', { subject, examType, normalizedSubject, error });
+    return { ok: false, status: 500, error };
   }
 
-  return { ok: true, inserted: normalizedQuestions.length, subject, examType };
+  return { ok: true, inserted: normalizedQuestions.length, subject, examType, normalizedSubject, subjectId };
 }

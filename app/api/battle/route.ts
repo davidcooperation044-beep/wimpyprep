@@ -35,6 +35,12 @@ async function ensureQuestionIds(supabase: NonNullable<ReturnType<typeof createS
       if (!reloadError && (reloadedQuestions?.length ?? 0) > 0) {
         return (reloadedQuestions ?? []).map((question) => question.id).slice(0, 10);
       }
+    } else {
+      console.error('[battle-route]', {
+        subjectId,
+        subjectName: subjectResponse.data.name,
+        ingestionError: ingestionResult.error,
+      });
     }
   }
 

@@ -3,6 +3,10 @@ import { createServiceSupabaseClient } from '../../../lib/supabase';
 import { isPremiumYear, PREMIUM_YEAR_START } from '../../../lib/premium';
 import { ingestQuestionsForSubject } from '../../../lib/aloc-ingestion';
 
+function isLikelyUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 async function getVerifiedUserId(request: Request) {
   const authorization = request.headers.get('authorization') ?? request.headers.get('Authorization') ?? '';
   const match = authorization.match(/^Bearer\s+(.+)$/i);
@@ -119,20 +123,51 @@ export async function GET(request: Request) {
     return query;
   };
 
-  let { data, error } = await buildQuery(resolvedSubjectId);
+  let { data, error } = { data: null as any, error: null as any };
+  let ingestionError: string | null = null;
+  let ingestionAttempted = false;
+
+  if (isLikelyUuid(resolvedSubjectId)) {
+    ({ data, error } = await buildQuery(resolvedSubjectId));
+  }
 
   if (!error && (!data || !data.length) && resolvedSubjectName) {
+    ingestionAttempted = true;
     const ingestionResult = await ingestQuestionsForSubject(resolvedSubjectName, resolvedExamType ?? 'jamb');
     if (ingestionResult.ok) {
+      resolvedSubjectId = ingestionResult.subjectId ?? resolvedSubjectId;
       ({ data, error } = await buildQuery(resolvedSubjectId));
+    } else {
+      ingestionError = ingestionResult.error ?? 'ALOC ingestion failed';
+      console.error('[questions-route]', {
+        subjectId,
+        resolvedSubjectId,
+        resolvedSubjectName,
+        resolvedExamType,
+        ingestionError,
+      });
     }
   }
 
   if (error) {
-    return NextResponse.json({ error: 'Unable to load questions for this subject' }, { status: 500 });
+    return NextResponse.json({
+      questions: [],
+      isPro,
+      premiumYearSelected: Boolean(year && isPremiumYear(year)),
+      debug: {
+        subjectId,
+        resolvedSubjectId,
+        resolvedSubjectName,
+        resolvedExamType,
+        subjectRow: subjectRow ?? null,
+        ingestionAttempted,
+        ingestionError,
+        queryError: error?.message ?? null,
+      },
+    });
   }
 
-  const questions = (data ?? []).filter((question) => {
+  const questions = (data ?? []).filter((question: { year?: number | null }) => {
     if (!isPremiumYear(question.year)) {
       return true;
     }
@@ -151,6 +186,8 @@ export async function GET(request: Request) {
         resolvedSubjectName,
         resolvedExamType,
         subjectRow: subjectRow ?? null,
+        ingestionAttempted,
+        ingestionError,
       },
     });
   }
