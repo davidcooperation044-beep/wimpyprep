@@ -7,7 +7,7 @@ import { useSession } from '../lib/session-bootstrap';
 import { createPublicSupabaseClient } from '../lib/supabase';
 import { buildReferralLink, loadUserMetrics, type UserMetrics } from '../lib/user-metrics';
 
-const subjects = ['English', 'Mathematics', 'Physics', 'Biology'];
+const defaultSubjects = ['English', 'Mathematics', 'Physics', 'Biology'];
 
 export default function HomePage() {
   const { isAuthenticated, isLoading, signInUrl, user, accessToken } = useSession();
@@ -16,6 +16,7 @@ export default function HomePage() {
   const [referralCount, setReferralCount] = useState<number | null>(null);
   const [referralUrl, setReferralUrl] = useState<string>('');
   const [progressValue, setProgressValue] = useState(0);
+  const [focusSubjects, setFocusSubjects] = useState<string[]>([]);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -57,6 +58,53 @@ export default function HomePage() {
       active = false;
     };
   }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user || !accessToken) {
+      setFocusSubjects([]);
+      return;
+    }
+
+    let active = true;
+    const loadFocusSubjects = async () => {
+      const response = await fetch('/api/user-subjects', {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      const data = (await response.json().catch(() => ({ selections: [] }))) as { selections?: unknown };
+      if (!active) {
+        return;
+      }
+
+      const names: string[] = Array.isArray(data?.selections)
+        ? Array.from(
+            new Set(
+              data.selections
+                .map((item: unknown) => {
+                  if (item && typeof item === 'object' && 'name' in item) {
+                    const nameValue = (item as { name?: unknown }).name;
+                    return typeof nameValue === 'string' ? nameValue : null;
+                  }
+                  return null;
+                })
+                .filter((value): value is string => typeof value === 'string')
+            )
+          )
+        : [];
+      setFocusSubjects(names);
+    };
+
+    void loadFocusSubjects();
+    return () => {
+      active = false;
+    };
+  }, [accessToken, isAuthenticated, user]);
 
   return (
     <main className="shell">
@@ -122,7 +170,7 @@ export default function HomePage() {
           <span>Mobile-first study sprint</span>
         </div>
         <div className="subject-grid">
-          {subjects.map((subject) => (
+          {(focusSubjects.length ? focusSubjects : defaultSubjects).map((subject) => (
             <div key={subject} className="chip">{subject}</div>
           ))}
         </div>
