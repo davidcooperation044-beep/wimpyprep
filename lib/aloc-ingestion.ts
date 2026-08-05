@@ -24,7 +24,7 @@ type ALOCQuestion = {
 
 const ALOC_API_URL = 'https://questions.aloc.com.ng/api/v2/m/100';
 const MAX_QUESTIONS_PER_SUBJECT = 100;
-const VALID_ALOC_TYPES = new Set(['utme', 'wassce', 'post-utme']);
+const VALID_ALOC_TYPES = new Set(['utme', 'wassce', 'post-utme', 'neco']);
 const FETCH_TIMEOUT_MS = Number.parseInt(process.env.ALOC_FETCH_TIMEOUT_MS ?? '', 10);
 const EFFECTIVE_FETCH_TIMEOUT_MS = Number.isFinite(FETCH_TIMEOUT_MS) && FETCH_TIMEOUT_MS > 0 ? FETCH_TIMEOUT_MS : 300000;
 
@@ -61,6 +61,10 @@ function normalizeExamType(examType: string) {
   const normalized = examType.trim().toLowerCase();
   if (normalized === 'jamb') {
     return 'utme';
+  }
+
+  if (normalized === 'waec') {
+    return 'wassce';
   }
 
   return VALID_ALOC_TYPES.has(normalized) ? normalized : null;

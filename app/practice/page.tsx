@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from '../../lib/session-bootstrap';
 import { createPublicSupabaseClient } from '../../lib/supabase';
 import { updateStreakAfterSession } from '../../lib/user-metrics';
@@ -22,6 +22,14 @@ type QuestionResult = {
   explanation: string | null;
 };
 
+type QuestionAnswerState = {
+  selectedOption: string;
+  isCorrect: boolean;
+  correctOption: string;
+  explanation: string | null;
+  submitted: boolean;
+};
+
 type WimpyAIResponse = {
   focusList: string[];
   message: string;
@@ -39,8 +47,7 @@ export default function PracticePage() {
   const [questions, setQuestions] = useState<QuestionRow[]>([]);
   const [index, setIndex] = useState(0);
   const [score, setScore] = useState(0);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [questionResult, setQuestionResult] = useState<QuestionResult | null>(null);
+  const [answerStates, setAnswerStates] = useState<Record<string, QuestionAnswerState>>({});
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
@@ -55,7 +62,7 @@ export default function PracticePage() {
   const [isDownloading, setIsDownloading] = useState(false);
   const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
   const userId = user?.id ?? null;
-  const subjectIdsList = useMemo(() => subjects.map((subject) => subject.id), [subjects]);
+  const autoAdvanceTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const supabase = createPublicSupabaseClient();
@@ -72,6 +79,14 @@ export default function PracticePage() {
           setSubjects(data as Subject[]);
         }
       });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -141,17 +156,17 @@ export default function PracticePage() {
       return;
     }
 
-    const supabase = createPublicSupabaseClient();
-    if (!supabase) {
-      return;
-    }
-
     const loadQuestions = async () => {
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+        autoAdvanceTimerRef.current = null;
+      }
+
       setIsLoadingQuestions(true);
       setQuestions([]);
       setIndex(0);
       setScore(0);
-      setSelected(null);
+      setAnswerStates({});
       setSessionId(null);
       setLimitMessage('');
       setSessionComplete(false);
@@ -218,8 +233,16 @@ export default function PracticePage() {
 
   const question = questions[index];
   const progress = useMemo(() => (questions.length ? ((index + 1) / questions.length) * 100 : 0), [index, questions.length]);
+  const currentAnswerState = question ? answerStates[question.id] : undefined;
 
   const hasReachedLimit = !isPro && practiceCount >= FREE_PRACTICE_DAILY_LIMIT;
+
+  const clearAutoAdvanceTimer = () => {
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+  };
 
   const downloadQuestions = async () => {
     if (!selectedSubjectId) {
@@ -250,15 +273,23 @@ export default function PracticePage() {
   };
 
   const handleAnswer = async (option: string) => {
-    if (!isAuthenticated || !user || !question || !sessionId || hasReachedLimit) {
+    if (!isAuthenticated || !user || !question || !sessionId || hasReachedLimit || currentAnswerState?.submitted) {
       if (hasReachedLimit) {
         setLimitMessage(`You have hit your free daily limit of ${FREE_PRACTICE_DAILY_LIMIT} questions. Upgrade for unlimited practice.`);
       }
       return;
     }
 
-    setSelected(option);
-    setQuestionResult(null);
+    setAnswerStates((current) => ({
+      ...current,
+      [question.id]: {
+        selectedOption: option,
+        isCorrect: false,
+        correctOption: '',
+        explanation: null,
+        submitted: true,
+      },
+    }));
 
     const response = await fetch('/api/questions/answer', {
       method: 'POST',
@@ -274,14 +305,45 @@ export default function PracticePage() {
     });
 
     if (!response.ok) {
-      setQuestionResult({ isCorrect: false, correctOption: '', explanation: 'Unable to validate answer.' });
+      setAnswerStates((current) => ({
+        ...current,
+        [question.id]: {
+          selectedOption: option,
+          isCorrect: false,
+          correctOption: '',
+          explanation: 'Unable to validate answer.',
+          submitted: true,
+        },
+      }));
       return;
     }
 
     const result = (await response.json()) as QuestionResult;
-    setQuestionResult(result);
+    setAnswerStates((current) => ({
+      ...current,
+      [question.id]: {
+        selectedOption: option,
+        isCorrect: result.isCorrect,
+        correctOption: result.correctOption,
+        explanation: result.explanation,
+        submitted: true,
+      },
+    }));
     setScore((currentScore) => (result.isCorrect ? currentScore + 1 : currentScore));
     setPracticeCount((count) => count + 1);
+
+    if (index < questions.length - 1) {
+      clearAutoAdvanceTimer();
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        setIndex((value) => (value < questions.length - 1 ? value + 1 : value));
+      }, 1100);
+      return;
+    }
+
+    clearAutoAdvanceTimer();
+    autoAdvanceTimerRef.current = window.setTimeout(() => {
+      void completeSession(question.id);
+    }, 1100);
   };
 
   const fetchRecommendedFocus = async (questionId?: string) => {
@@ -331,14 +393,19 @@ export default function PracticePage() {
     await fetchRecommendedFocus(questionId);
   };
 
-  const nextQuestion = async () => {
+  const nextQuestion = () => {
+    clearAutoAdvanceTimer();
     if (index < questions.length - 1) {
       setIndex((value) => value + 1);
-      setSelected(null);
       return;
     }
 
-    await completeSession(question?.id);
+    void completeSession(question?.id);
+  };
+
+  const previousQuestion = () => {
+    clearAutoAdvanceTimer();
+    setIndex((value) => Math.max(0, value - 1));
   };
 
   if (isLoading) {
@@ -454,7 +521,7 @@ export default function PracticePage() {
             <p className="lead">You’ve reached your free daily limit of {FREE_PRACTICE_DAILY_LIMIT} practice questions.</p>
             {limitMessage ? <p className="meta">{limitMessage}</p> : <p className="meta">Upgrade to WimpyPrep Pro for unlimited practice and full AI insights.</p>}
             <button className="button primary" onClick={() => setShowUpgradeModal(true)} type="button">Upgrade to Pro</button>
-          <UpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} onSuccess={() => setShowUpgradeModal(false)} />
+            <UpgradeModal open={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} onSuccess={() => setShowUpgradeModal(false)} />
           </div>
         ) : !question ? (
           <div className="panel">
@@ -467,24 +534,38 @@ export default function PracticePage() {
               <h2>{question.topic ?? 'General'}</h2>
               <span>{index + 1}/{questions.length}</span>
             </div>
+            <div className="actions" style={{ marginBottom: 12 }}>
+              <button className="button secondary" type="button" onClick={previousQuestion} disabled={index === 0}>
+                Previous
+              </button>
+              <button className="button primary" type="button" onClick={nextQuestion} disabled={questions.length === 0}>
+                {index === questions.length - 1 ? 'Finish session' : 'Next'}
+              </button>
+            </div>
             <p className="question-text">{question.question_text}</p>
             <div className="options-list">
-              {question.options.map((option) => (
-                <button
-                  key={option.label}
-                  className="option"
-                  onClick={() => void handleAnswer(option.label)}
-                  disabled={Boolean(selected)}
-                >
-                  {option.label}. {option.text}
-                </button>
-              ))}
+              {question.options.map((option) => {
+                const isAnswered = currentAnswerState?.submitted;
+                const isSelected = isAnswered && currentAnswerState?.selectedOption === option.label;
+                const isCorrectOption = isAnswered && currentAnswerState?.correctOption === option.label;
+                return (
+                  <button
+                    key={option.label}
+                    className="option"
+                    onClick={() => void handleAnswer(option.label)}
+                    disabled={Boolean(isAnswered)}
+                    style={isAnswered ? { borderColor: isCorrectOption ? '#2f855a' : isSelected ? '#c53030' : undefined } : undefined}
+                  >
+                    {option.label}. {option.text}
+                  </button>
+                );
+              })}
             </div>
-            {selected ? (
+            {currentAnswerState?.submitted ? (
               <div className="feedback">
-                <p>{questionResult?.isCorrect ? 'Correct — nice work.' : `Not quite. The correct answer is ${questionResult?.correctOption}.`}</p>
-                {questionResult?.explanation ? <p>{questionResult.explanation}</p> : null}
-                {!questionResult?.isCorrect && sessionId ? (
+                <p>{currentAnswerState.isCorrect ? 'Correct — nice work.' : `Not quite. The correct answer is ${currentAnswerState.correctOption}.`}</p>
+                {currentAnswerState.explanation ? <p>{currentAnswerState.explanation}</p> : null}
+                {!currentAnswerState.isCorrect && sessionId ? (
                   <button
                     className="button secondary"
                     onClick={() => void fetchRecommendedFocus(question.id)}
@@ -492,9 +573,14 @@ export default function PracticePage() {
                     Explain this question
                   </button>
                 ) : null}
-                <button className="button primary" onClick={nextQuestion}>
-                  {index === questions.length - 1 ? 'Finish session' : 'Next'}
-                </button>
+                <div className="actions">
+                  <button className="button secondary" type="button" onClick={previousQuestion} disabled={index === 0}>
+                    Previous
+                  </button>
+                  <button className="button primary" type="button" onClick={nextQuestion}>
+                    {index === questions.length - 1 ? 'Finish session' : 'Next'}
+                  </button>
+                </div>
               </div>
             ) : null}
             {(sessionComplete || wimpyAiResponse) ? (

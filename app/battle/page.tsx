@@ -1,7 +1,7 @@
 "use client";
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from '../../lib/session-bootstrap';
 import { createPublicSupabaseClient } from '../../lib/supabase';
 
@@ -34,6 +34,15 @@ type BattleDetail = {
   question_ids: string[];
   created_at: string;
   started_at: string | null;
+  ends_at: string | null;
+  completed_at: string | null;
+  room_code: string | null;
+  is_private: boolean;
+  time_limit_seconds: number | null;
+  question_count: number | null;
+  player_one_ready: boolean;
+  player_two_ready: boolean;
+  winner_id: string | null;
   questions: BattleQuestion[];
   answered_question_ids: string[];
   player_one_score: number;
@@ -42,20 +51,28 @@ type BattleDetail = {
   opponent_id: string | null;
 };
 
-async function createBattleLobby(subjectId: string, year: string, userId: string) {
-  const response = await fetch('/api/battle', {
+type BattleAnswerState = {
+  selectedOption: string;
+  submitted: boolean;
+};
+
+async function createBattleLobby(payload: Record<string, unknown>) {
+  const shouldJoinPrivate = Boolean(payload.isPrivate && payload.roomCode);
+  const endpoint = shouldJoinPrivate ? '/api/battle/join' : '/api/battle';
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ subjectId, year, userId }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
-    throw new Error('Unable to join a battle lobby right now.');
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error((errorData as { error?: string }).error ?? 'Unable to join a battle lobby right now.');
   }
 
-  return response.json();
+  return response.json() as Promise<{ battle: BattleDetail; joined: boolean; status: string }>;
 }
 
 async function fetchBattleDetail(battleId: string) {
@@ -68,7 +85,7 @@ async function fetchBattleDetail(battleId: string) {
 }
 
 async function submitBattleAnswer(battleId: string, questionId: string, selectedOption: string) {
-  const response = await fetch(`/api/battle/${battleId}/answers`, {
+  const response = await fetch(`/api/battle/${battleId}/answer`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -83,19 +100,56 @@ async function submitBattleAnswer(battleId: string, questionId: string, selected
   return response.json();
 }
 
+async function markBattleReady(battleId: string) {
+  const response = await fetch(`/api/battle/${battleId}/ready`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error('Unable to mark yourself ready.');
+  }
+
+  return response.json() as Promise<{ battle: BattleDetail; started: boolean }>;
+}
+
+async function completeBattle(battleId: string) {
+  const response = await fetch(`/api/battle/${battleId}/complete`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error('Unable to finish the battle.');
+  }
+
+  return response.json() as Promise<{ battle: BattleDetail }>;
+}
+
 export default function BattlePage() {
   const { isAuthenticated, user, signInUrl } = useSession();
   const [subjects, setSubjects] = useState<SubjectOption[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
   const [year, setYear] = useState('');
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [roomCode, setRoomCode] = useState('');
+  const [questionCount, setQuestionCount] = useState('10');
+  const [timeLimitSeconds, setTimeLimitSeconds] = useState('1800');
   const [isJoining, setIsJoining] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isReadying, setIsReadying] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [battle, setBattle] = useState<BattleDetail | null>(null);
   const [battleId, setBattleId] = useState<string | null>(null);
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [answerStates, setAnswerStates] = useState<Record<string, BattleAnswerState>>({});
+  const autoAdvanceTimerRef = useRef<number | null>(null);
 
-  const canJoin = useMemo(() => Boolean(isAuthenticated && user && selectedSubjectId), [isAuthenticated, selectedSubjectId, user]);
+  const canJoinPublic = useMemo(() => Boolean(isAuthenticated && user && selectedSubjectId), [isAuthenticated, selectedSubjectId, user]);
+  const canJoinExistingPrivate = useMemo(
+    () => Boolean(isAuthenticated && user && isPrivate && roomCode.trim()),
+    [isAuthenticated, isPrivate, roomCode, user],
+  );
 
   const refreshBattle = useCallback(async (activeBattleId: string) => {
     setIsRefreshing(true);
@@ -123,6 +177,14 @@ export default function BattlePage() {
     };
 
     void loadSubjects();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -162,8 +224,18 @@ export default function BattlePage() {
     };
   }, [battleId, isAuthenticated, refreshBattle]);
 
+  useEffect(() => {
+    if (!battle?.questions?.length) {
+      return;
+    }
+
+    if (questionIndex >= battle.questions.length) {
+      setQuestionIndex(Math.max(0, battle.questions.length - 1));
+    }
+  }, [battle, questionIndex]);
+
   const handleJoinLobby = async () => {
-    if (!user || !canJoin) {
+    if (!user || (!isPrivate ? !canJoinPublic : !canJoinPublic && !canJoinExistingPrivate)) {
       return;
     }
 
@@ -171,9 +243,19 @@ export default function BattlePage() {
     setJoinError(null);
 
     try {
-      const result = await createBattleLobby(selectedSubjectId, year, user.id);
+      const result = await createBattleLobby({
+        subjectId: selectedSubjectId,
+        year,
+        userId: user.id,
+        questionCount: Number(questionCount) || 10,
+        timeLimitSeconds: Number(timeLimitSeconds) || 1800,
+        isPrivate,
+        roomCode: roomCode.trim(),
+      });
       setBattleId(result?.battle?.id ?? null);
       setBattle(result?.battle ?? null);
+      setQuestionIndex(0);
+      setAnswerStates({});
     } catch (error) {
       setJoinError(error instanceof Error ? error.message : 'Unable to join a battle lobby.');
     } finally {
@@ -181,15 +263,75 @@ export default function BattlePage() {
     }
   };
 
-  const handleAnswer = async (questionId: string, selectedOption: string) => {
+  const clearAutoAdvanceTimer = () => {
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+  };
+
+  const handleReady = async () => {
     if (!battleId || !battle) {
+      return;
+    }
+
+    setIsReadying(true);
+    setJoinError(null);
+    try {
+      const result = await markBattleReady(battleId);
+      setBattle(result.battle);
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : 'Unable to mark yourself ready.');
+    } finally {
+      setIsReadying(false);
+    }
+  };
+
+  const handleComplete = async () => {
+    if (!battleId || !battle) {
+      return;
+    }
+
+    setIsCompleting(true);
+    setJoinError(null);
+    try {
+      const result = await completeBattle(battleId);
+      setBattle(result.battle);
+    } catch (error) {
+      setJoinError(error instanceof Error ? error.message : 'Unable to finish the battle.');
+    } finally {
+      setIsCompleting(false);
+    }
+  };
+
+  const handleAnswer = async (questionId: string, selectedOption: string) => {
+    if (!battleId || !battle || answerStates[questionId]?.submitted) {
       return;
     }
 
     setIsSubmitting(true);
     try {
       await submitBattleAnswer(battleId, questionId, selectedOption);
+      const nextAnswerStates = {
+        ...answerStates,
+        [questionId]: {
+          selectedOption,
+          submitted: true,
+        },
+      };
+      setAnswerStates(nextAnswerStates);
       await refreshBattle(battleId);
+      if (battle.questions?.length && questionIndex < battle.questions.length - 1) {
+        clearAutoAdvanceTimer();
+        autoAdvanceTimerRef.current = window.setTimeout(() => {
+          setQuestionIndex((value) => Math.min(value + 1, battle.questions.length - 1));
+        }, 1000);
+      }
+
+      const answeredCount = Object.keys(nextAnswerStates).length;
+      if (battle.question_count && answeredCount >= battle.question_count) {
+        await completeBattle(battleId);
+      }
     } catch (error) {
       setJoinError(error instanceof Error ? error.message : 'Unable to submit that answer.');
     } finally {
@@ -202,9 +344,23 @@ export default function BattlePage() {
       return null;
     }
 
-    const answeredIds = new Set(battle.answered_question_ids ?? []);
-    return battle.questions.find((question) => !answeredIds.has(question.id)) ?? battle.questions[0] ?? null;
-  }, [battle]);
+    return battle.questions[questionIndex] ?? battle.questions[0] ?? null;
+  }, [battle, questionIndex]);
+
+  const previousQuestion = () => {
+    clearAutoAdvanceTimer();
+    setQuestionIndex((value) => Math.max(0, value - 1));
+  };
+
+  const nextQuestion = () => {
+    clearAutoAdvanceTimer();
+    if (!battle?.questions?.length) {
+      return;
+    }
+    setQuestionIndex((value) => Math.min(value + 1, battle.questions.length - 1));
+  };
+
+  const battleReady = battle?.status === 'active' || Boolean(battle?.player_one_ready && battle?.player_two_ready);
 
   if (!isAuthenticated) {
     return (
@@ -224,7 +380,7 @@ export default function BattlePage() {
       <section className="hero">
         <p className="eyebrow">Live Exam Battle</p>
         <h1>Race another learner in a real-time exam room.</h1>
-        <p className="lead">Choose a subject, optionally pick a premium year, and join the next available lobby.</p>
+        <p className="lead">Create a public lobby or join a private room with a code, then ready up for a live match.</p>
         {!battle ? (
           <div className="panel" style={{ marginTop: 18 }}>
             <label className="subject-picker-label">
@@ -248,23 +404,57 @@ export default function BattlePage() {
                 <option value="2026">2026</option>
               </select>
             </label>
+            <label className="subject-picker-label" style={{ marginTop: 12 }}>
+              <span>Question count</span>
+              <select className="option" value={questionCount} onChange={(event) => setQuestionCount(event.target.value)}>
+                <option value="10">10 questions</option>
+                <option value="20">20 questions</option>
+                <option value="40">40 questions</option>
+              </select>
+            </label>
+            <label className="subject-picker-label" style={{ marginTop: 12 }}>
+              <span>Time limit</span>
+              <select className="option" value={timeLimitSeconds} onChange={(event) => setTimeLimitSeconds(event.target.value)}>
+                <option value="900">15 minutes</option>
+                <option value="1800">30 minutes</option>
+                <option value="3600">60 minutes</option>
+              </select>
+            </label>
+            <label className="subject-picker-label" style={{ marginTop: 12 }}>
+              <span>Private room</span>
+              <input className="option" type="checkbox" checked={isPrivate} onChange={(event) => setIsPrivate(event.target.checked)} style={{ width: 'auto' }} />
+            </label>
+            {isPrivate ? (
+              <label className="subject-picker-label" style={{ marginTop: 12 }}>
+                <span>Room code</span>
+                <input className="option" value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="e.g. ABC123" />
+              </label>
+            ) : null}
             <div className="actions">
-              <button className="button primary" type="button" disabled={!canJoin || isJoining} onClick={() => void handleJoinLobby()}>
-                {isJoining ? 'Joining…' : 'Join lobby'}
+              <button
+                className="button primary"
+                type="button"
+                disabled={isJoining || (!isPrivate ? !canJoinPublic : !canJoinPublic && !canJoinExistingPrivate)}
+                onClick={() => void handleJoinLobby()}
+              >
+                {isJoining
+                  ? 'Joining…'
+                  : isPrivate
+                  ? roomCode.trim()
+                    ? 'Join private room'
+                    : 'Create private room'
+                  : 'Create public room'}
               </button>
               <Link href="/practice" className="button secondary">Practice instead</Link>
             </div>
             {joinError ? <p className="meta alert-text" style={{ marginTop: 12 }}>{joinError}</p> : null}
-            <p className="meta" style={{ marginTop: 12 }}>
-              Premium-year matches are gated for Pro subscribers and will unlock once you upgrade.
-            </p>
           </div>
         ) : (
           <div className="panel" style={{ marginTop: 18 }}>
             <div className="actions" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <p className="eyebrow">{battle.status === 'waiting' ? 'Waiting room' : 'Live match'}</p>
-                <h2 style={{ margin: '4px 0' }}>{battle.status === 'waiting' ? 'Waiting for an opponent' : 'Battle in progress'}</h2>
+                <p className="eyebrow">{battle.status === 'waiting' ? 'Waiting room' : battle.status === 'active' ? 'Live match' : 'Completed'}</p>
+                <h2 style={{ margin: '4px 0' }}>{battle.status === 'waiting' ? 'Waiting for the second player' : battle.status === 'active' ? 'Battle in progress' : 'Battle complete'}</h2>
               </div>
               <button className="button secondary" type="button" onClick={() => setBattle(null)}>
                 New battle
@@ -272,31 +462,57 @@ export default function BattlePage() {
             </div>
             <p className="meta" style={{ marginTop: 8 }}>
               Subject: {subjects.find((subject) => subject.id === battle.subject_id)?.name ?? 'Selected subject'} · Year:{' '}
-              {battle.year ?? 'Any'}
+              {battle.year ?? 'Any'} · Questions: {battle.question_count ?? '10'}
             </p>
+            {battle.room_code ? <p className="meta" style={{ marginTop: 4 }}>Room code: {battle.room_code}</p> : null}
             <p className="meta" style={{ marginTop: 4 }}>
-              {battle.status === 'waiting' ? 'You&apos;re in the queue. Another learner can join you at any time.' : 'Realtime updates are flowing in from your opponent.'}
+              {battle.status === 'waiting' ? 'Invite the other player and press Ready when you are both prepared.' : 'Realtime updates are flowing in from your opponent.'}
             </p>
             <div className="panel" style={{ marginTop: 12 }}>
               <p className="meta">Scoreboard</p>
-              <p className="meta">You: {battle.player_one_score + (battle.participant_role === 'player_two' ? 0 : 0)} · Opponent: {battle.player_two_score}</p>
+              <p className="meta">
+                You: {battle.participant_role === 'player_one' ? battle.player_one_score : battle.player_two_score} · Opponent: {battle.participant_role === 'player_one' ? battle.player_two_score : battle.player_one_score}
+              </p>
+              {battle.status === 'waiting' ? (
+                <div className="actions" style={{ marginTop: 8 }}>
+                  <button className="button primary" type="button" disabled={isReadying || battleReady} onClick={() => void handleReady()}>
+                    {isReadying ? 'Preparing…' : battleReady ? 'Waiting for opponent' : 'Ready up'}
+                  </button>
+                </div>
+              ) : null}
             </div>
-            {battle.status !== 'waiting' && activeQuestion ? (
+            {battle.status === 'active' && activeQuestion ? (
               <div className="panel" style={{ marginTop: 12 }}>
-                <p className="eyebrow">Current question</p>
+                <div className="actions" style={{ marginBottom: 12 }}>
+                  <button className="button secondary" type="button" onClick={previousQuestion} disabled={questionIndex === 0}>
+                    Previous
+                  </button>
+                  <button className="button primary" type="button" onClick={nextQuestion} disabled={!battle.questions?.length || questionIndex >= battle.questions.length - 1}>
+                    Next
+                  </button>
+                </div>
+                <p className="eyebrow">Question {questionIndex + 1}/{battle.questions.length}</p>
                 <h3 style={{ marginTop: 4 }}>{activeQuestion.question_text}</h3>
                 <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
-                  {activeQuestion.options.map((option) => (
-                    <button
-                      key={`${activeQuestion.id}-${option.label}`}
-                      className="button secondary"
-                      type="button"
-                      disabled={isSubmitting || battle.answered_question_ids.includes(activeQuestion.id)}
-                      onClick={() => void handleAnswer(activeQuestion.id, option.label)}
-                    >
-                      {option.label}. {option.text}
-                    </button>
-                  ))}
+                  {activeQuestion.options.map((option) => {
+                    const state = answerStates[activeQuestion.id];
+                    return (
+                      <button
+                        key={`${activeQuestion.id}-${option.label}`}
+                        className="button secondary"
+                        type="button"
+                        disabled={isSubmitting || Boolean(state?.submitted)}
+                        onClick={() => void handleAnswer(activeQuestion.id, option.label)}
+                      >
+                        {option.label}. {option.text}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="actions" style={{ marginTop: 12 }}>
+                  <button className="button secondary" type="button" disabled={isCompleting} onClick={() => void handleComplete()}>
+                    {isCompleting ? 'Finishing…' : 'Finish battle'}
+                  </button>
                 </div>
               </div>
             ) : null}

@@ -2,6 +2,19 @@ import { NextResponse } from 'next/server';
 import { getVerifiedUserId } from '../../../../lib/auth';
 import { createServiceSupabaseClient } from '../../../../lib/supabase';
 
+function shuffleArray<T>(values: T[], salt: string) {
+  const shuffled = [...values];
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const hash = Array.from(salt + index).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    const swapIndex = hash % (index + 1);
+    const temp = shuffled[index];
+    shuffled[index] = shuffled[swapIndex];
+    shuffled[swapIndex] = temp;
+  }
+
+  return shuffled;
+}
+
 export async function GET(request: Request, { params }: { params: { battleId: string } }) {
   const { userId, response } = await getVerifiedUserId(request, 'battle:detail');
   if (response) {
@@ -29,12 +42,21 @@ export async function GET(request: Request, { params }: { params: { battleId: st
 
   const questionIds = Array.isArray(battle.question_ids) ? battle.question_ids : [];
   const questionLookup = questionIds.length
-    ? await supabase.from('wp_questions').select('id,topic,question_text,options,year').in('id', questionIds).order('id', { ascending: true })
+    ? await supabase.from('wp_questions').select('id,topic,question_text,options,year').in('id', questionIds)
     : { data: [], error: null };
 
   if (questionLookup.error) {
     return NextResponse.json({ error: 'Unable to load battle questions' }, { status: 500 });
   }
+
+  const questionMap = new Map<string, any>((questionLookup.data ?? []).map((question: any) => [question.id, question]));
+  const questions = questionIds
+    .map((id: string) => questionMap.get(id))
+    .filter(Boolean)
+    .map((question: any) => ({
+      ...question,
+      options: Array.isArray(question.options) ? shuffleArray(question.options, `${battle.id}:${question.id}`) : [],
+    }));
 
   const { data: answersData } = await supabase
     .from('wp_battle_answers')
@@ -59,7 +81,16 @@ export async function GET(request: Request, { params }: { params: { battleId: st
       question_ids: questionIds,
       created_at: battle.created_at,
       started_at: battle.started_at,
-      questions: questionLookup.data ?? [],
+      ends_at: battle.ends_at,
+      completed_at: battle.completed_at,
+      room_code: battle.room_code,
+      is_private: battle.is_private,
+      time_limit_seconds: battle.time_limit_seconds,
+      question_count: battle.question_count,
+      player_one_ready: battle.player_one_ready,
+      player_two_ready: battle.player_two_ready,
+      winner_id: battle.winner_id,
+      questions,
       answered_question_ids: answeredQuestionIds,
       player_one_score: playerOneScore,
       player_two_score: playerTwoScore,

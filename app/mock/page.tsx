@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSession } from '../../lib/session-bootstrap';
 import { createPublicSupabaseClient } from '../../lib/supabase';
 import { updateStreakAfterSession } from '../../lib/user-metrics';
@@ -22,6 +22,14 @@ type QuestionResult = {
   explanation: string | null;
 };
 
+type QuestionAnswerState = {
+  selectedOption: string;
+  isCorrect: boolean;
+  correctOption: string;
+  explanation: string | null;
+  submitted: boolean;
+};
+
 type WimpyAIResponse = {
   focusList: string[];
   message: string;
@@ -36,8 +44,7 @@ export default function MockPage() {
   const [index, setIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(90);
   const [score, setScore] = useState(0);
-  const [selectedOption, setSelectedOption] = useState<string | null>(null);
-  const [questionResult, setQuestionResult] = useState<QuestionResult | null>(null);
+  const [answerStates, setAnswerStates] = useState<Record<string, QuestionAnswerState>>({});
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
@@ -51,6 +58,7 @@ export default function MockPage() {
   const [isSubjectSelectionReady, setIsSubjectSelectionReady] = useState(false);
   const { user, accessToken, isAuthenticated, isLoading, signInUrl } = useSession();
   const userId = user?.id ?? null;
+  const autoAdvanceTimerRef = useRef<number | null>(null);
   const subjectIdsList = useMemo(() => subjects.map((subject) => subject.id), [subjects]);
 
   useEffect(() => {
@@ -68,6 +76,14 @@ export default function MockPage() {
           setSubjects(data as Subject[]);
         }
       });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -130,12 +146,12 @@ export default function MockPage() {
       return;
     }
 
-    const supabase = createPublicSupabaseClient();
-    if (!supabase) {
-      return;
-    }
-
     const loadQuestions = async () => {
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+        autoAdvanceTimerRef.current = null;
+      }
+
       if (!isPro) {
         setIsLoadingQuestions(false);
         setQuestions([]);
@@ -146,8 +162,7 @@ export default function MockPage() {
       setQuestions([]);
       setIndex(0);
       setScore(0);
-      setSelectedOption(null);
-      setQuestionResult(null);
+      setAnswerStates({});
       setSessionId(null);
       setTimeLeft(90);
 
@@ -214,6 +229,7 @@ export default function MockPage() {
 
   const question = questions[index];
   const progress = useMemo(() => (questions.length ? ((index + 1) / questions.length) * 100 : 0), [index, questions.length]);
+  const currentAnswerState = question ? answerStates[question.id] : undefined;
 
   useEffect(() => {
     if (timeLeft !== 0 || !isAuthenticated || !sessionId || sessionComplete) {
@@ -223,13 +239,28 @@ export default function MockPage() {
     void completeSession(question?.id);
   }, [timeLeft, isAuthenticated, question?.id, sessionId, sessionComplete]);
 
+  const clearAutoAdvanceTimer = () => {
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+  };
+
   const submitAnswer = async (option: string) => {
-    if (!isAuthenticated || !user || !question || !sessionId || selectedOption) {
+    if (!isAuthenticated || !user || !question || !sessionId || currentAnswerState?.submitted) {
       return;
     }
 
-    setSelectedOption(option);
-    setQuestionResult(null);
+    setAnswerStates((current) => ({
+      ...current,
+      [question.id]: {
+        selectedOption: option,
+        isCorrect: false,
+        correctOption: '',
+        explanation: null,
+        submitted: true,
+      },
+    }));
 
     const response = await fetch('/api/questions/answer', {
       method: 'POST',
@@ -245,13 +276,38 @@ export default function MockPage() {
     });
 
     if (!response.ok) {
-      setQuestionResult({ isCorrect: false, correctOption: '', explanation: 'Unable to validate answer.' });
+      setAnswerStates((current) => ({
+        ...current,
+        [question.id]: {
+          selectedOption: option,
+          isCorrect: false,
+          correctOption: '',
+          explanation: 'Unable to validate answer.',
+          submitted: true,
+        },
+      }));
       return;
     }
 
     const result = (await response.json()) as QuestionResult;
-    setQuestionResult(result);
+    setAnswerStates((current) => ({
+      ...current,
+      [question.id]: {
+        selectedOption: option,
+        isCorrect: result.isCorrect,
+        correctOption: result.correctOption,
+        explanation: result.explanation,
+        submitted: true,
+      },
+    }));
     setScore((currentScore) => (result.isCorrect ? currentScore + 1 : currentScore));
+
+    if (index < questions.length - 1) {
+      clearAutoAdvanceTimer();
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        setIndex((value) => (value < questions.length - 1 ? value + 1 : value));
+      }, 1100);
+    }
   };
 
   const fetchRecommendedFocus = async (questionId?: string) => {
@@ -289,14 +345,19 @@ export default function MockPage() {
     await fetchRecommendedFocus(questionId);
   };
 
-  const nextQuestion = async () => {
+  const nextQuestion = () => {
+    clearAutoAdvanceTimer();
     if (index < questions.length - 1) {
       setIndex((value) => value + 1);
-      setSelectedOption(null);
       return;
     }
 
-    await completeSession(question?.id);
+    void completeSession(question?.id);
+  };
+
+  const previousQuestion = () => {
+    clearAutoAdvanceTimer();
+    setIndex((value) => Math.max(0, value - 1));
   };
 
   if (isLoading) {
@@ -425,40 +486,57 @@ export default function MockPage() {
               <h2>{question.topic ?? 'General'}</h2>
               <span>Question {index + 1}/{questions.length}</span>
             </div>
+            <div className="actions" style={{ marginBottom: 12 }}>
+              <button className="button secondary" type="button" onClick={previousQuestion} disabled={index === 0}>
+                Previous
+              </button>
+              <button className="button primary" type="button" onClick={nextQuestion}>
+                {index === questions.length - 1 ? 'Finish exam' : 'Next question'}
+              </button>
+            </div>
             <p className="question-text">{question.question_text}</p>
             <div className="options-list">
-              {question.options.map((option) => (
-                <button
-                  key={option.label}
-                  className="option"
-                  onClick={() => void submitAnswer(option.label)}
-                  disabled={Boolean(selectedOption) || timeLeft === 0}
-                >
-                  {option.label}. {option.text}
-                </button>
-              ))}
+              {question.options.map((option) => {
+                const isAnswered = currentAnswerState?.submitted;
+                const isSelected = isAnswered && currentAnswerState?.selectedOption === option.label;
+                const isCorrectOption = isAnswered && currentAnswerState?.correctOption === option.label;
+                return (
+                  <button
+                    key={option.label}
+                    className="option"
+                    onClick={() => void submitAnswer(option.label)}
+                    disabled={Boolean(isAnswered) || timeLeft === 0}
+                    style={isAnswered ? { borderColor: isCorrectOption ? '#2f855a' : isSelected ? '#c53030' : undefined } : undefined}
+                  >
+                    {option.label}. {option.text}
+                  </button>
+                );
+              })}
             </div>
-            {selectedOption ? (
+            {currentAnswerState?.submitted ? (
               <div className="feedback">
-                {questionResult ? (
-                  <>
-                    <p>{questionResult.isCorrect ? 'Correct — keep the pace.' : `Not quite. Answer ${questionResult.correctOption} is correct.`}</p>
-                    {questionResult.explanation ? <p>{questionResult.explanation}</p> : null}
-                    {!questionResult.isCorrect && sessionId ? (
-                      <button
-                        className="button secondary"
-                        onClick={() => void fetchRecommendedFocus(question.id)}
-                      >
-                        Explain this question
-                      </button>
-                    ) : null}
-                  </>
+                {currentAnswerState.isCorrect ? (
+                  <p>Correct — keep the pace.</p>
                 ) : (
-                  <p className="meta">Checking your answer…</p>
+                  <p>{`Not quite. Answer ${currentAnswerState.correctOption} is correct.`}</p>
                 )}
-                <button className="button primary" onClick={nextQuestion}>
-                  {index === questions.length - 1 ? 'Finish exam' : 'Next question'}
-                </button>
+                {currentAnswerState.explanation ? <p>{currentAnswerState.explanation}</p> : null}
+                {!currentAnswerState.isCorrect && sessionId ? (
+                  <button
+                    className="button secondary"
+                    onClick={() => void fetchRecommendedFocus(question.id)}
+                  >
+                    Explain this question
+                  </button>
+                ) : null}
+                <div className="actions">
+                  <button className="button secondary" type="button" onClick={previousQuestion} disabled={index === 0}>
+                    Previous
+                  </button>
+                  <button className="button primary" type="button" onClick={nextQuestion}>
+                    {index === questions.length - 1 ? 'Finish exam' : 'Next question'}
+                  </button>
+                </div>
               </div>
             ) : null}
             {(sessionComplete || wimpyAiResponse) ? (
